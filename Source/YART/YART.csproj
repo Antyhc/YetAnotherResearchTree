@@ -94,6 +94,7 @@
         <Compile Include="Compat\MultiplayerCompat.cs" />
         <Compile Include="Compat\SemiRandomResearchCompat.cs" />
         <Compile Include="Compat\StoredResearchCompat.cs" />
+        <Compile Include="Compat\MedievalOverhaulCompat.cs" />
         <Compile Include="TabPresetManager.cs" />
         <Compile Include="Favorites.cs" />
         <Compile Include="Dialog_PresetEditor.cs" />

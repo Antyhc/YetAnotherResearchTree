@@ -4,6 +4,7 @@ using System.Linq;
 using RimWorld;
 using UnityEngine;
 using Verse;
+using YART.Compat;
 using YART.Utils;
 
 namespace YART.Data
@@ -465,12 +466,15 @@ namespace YART.Data
             if (Def.PrerequisitesCompleted) return Def.CanStartNow;
 
             // TechPrint, 중력 구동기 점검, 메카나이터, 아노말리 지식, 특수 연구 작업대 체크
+            // + Medieval Overhaul 도식(schematic) — MO는 CanStartNow를 패치하므로 여기(선행
+            //   미완료 경로)에서도 동일하게 반영해야 큐 추가가 바닐라 판정과 일치한다
             return Def.TechprintRequirementMet
                 && (Def.requiredResearchBuilding == null || Def.PlayerHasAnyAppropriateResearchBench)
                 && Def.PlayerMechanitorRequirementMet
                 && Def.AnalyzedThingsRequirementsMet
                 && !Def.IsHidden
-                && Def.InspectionRequirementsMet;
+                && Def.InspectionRequirementsMet
+                && MedievalOverhaulCompat.SchematicRequirementMet(Def);
         }
 
         /// <summary>
@@ -512,6 +516,11 @@ namespace YART.Data
                     detail += " + " + string.Join(", ", Def.requiredResearchFacilities.Select(f => f.label));
                 }
                 outReasons.Add("MissingRequiredResearchFacilities".Translate() + " (" + detail + ")");
+            }
+            if (!MedievalOverhaulCompat.SchematicRequirementMet(Def))
+            {
+                var schematic = MedievalOverhaulCompat.RequiredSchematicFor(Def);
+                outReasons.Add("DankPyon_RequiredSchematic".Translate() + ": " + schematic.LabelCap);
             }
 
             // 자체 조건은 충족 — 선행 체인 중 잠긴 연구 안내

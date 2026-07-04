@@ -188,6 +188,9 @@ namespace YART
                 // 요구 작업대/시설 (완료 전 상시 표시 — 어떤 건물이 필요한지 계획에 필요)
                 y += DrawRequirementsSection(currentNode, padding, y, contentWidth);
 
+                // Medieval Overhaul의 Schematic
+                y += DrawSchematicSection(currentNode, padding, y, contentWidth);
+
                 // 잠금 사유 (Locked일 때만; 선행 미완료는 큐로 해결되므로 사유에 포함되지 않음)
                 if (currentNode.State == ResearchNodeState.Locked)
                 {
@@ -341,7 +344,7 @@ namespace YART
         }
 
         /// <summary>
-        /// 이력 내비게이션(&lt;/&gt;) 공용: 노드가 다른 그래프 소속이면 전환 후 포커스.
+        /// 이력 내비게이션 공용: 노드가 다른 그래프 소속이면 전환 후 포커스.
         /// JumpToNode와 달리 history는 건드리지 않는다 (이력 이동 중이므로).
         /// </summary>
         private void NavigateToHistoryNode(ResearchNode node)
@@ -729,6 +732,41 @@ namespace YART
             return 24f + rows * 32f + 6f; // 헤더 + 행(28+4) + 하단 여백
         }
 
+        private float DrawSchematicSection(ResearchNode node, float padding, float y, float contentWidth)
+        {
+            var def = node.Def;
+            if (def.IsFinished) return 0f;
+            var schematic = MedievalOverhaulCompat.RequiredSchematicFor(def);
+            if (schematic == null) return 0f;
+
+            float startY = y;
+            bool met = MedievalOverhaulCompat.SchematicRequirementMet(def);
+            Color statusColor = met ? new Color(0.6f, 1f, 0.6f) : new Color(0.95f, 0.8f, 0.35f);
+
+            // 헤더 + 상태 아이콘(체크/잠금) — DrawRequirementsSection과 동일 스타일
+            using (Temporary.Font(GameFont.Small))
+            using (Temporary.Color(new Color(0.7f, 0.78f, 0.9f)))
+            {
+                Widgets.Label(new Rect(padding, y, contentWidth - 20f, 22),
+                    "DankPyon_RequiredSchematic".Translate() + ":");
+            }
+            GUIDrawingUtilities.DrawIcon(new Rect(padding + contentWidth - 18f, y + 3f, 14f, 14f),
+                met ? Assets.IconCheck : Assets.IconLock, statusColor);
+            y += 24f;
+
+            y += DrawRequirementRow(new Rect(padding, y, contentWidth, 28f), schematic, statusColor);
+            y += 6f;
+            return y - startY;
+        }
+
+        /// <summary>DrawSchematicSection의 높이 측정</summary>
+        private static float MeasureSchematicHeight(ResearchNode node)
+        {
+            if (node.Def.IsFinished) return 0f;
+            if (MedievalOverhaulCompat.RequiredSchematicFor(node.Def) == null) return 0f;
+            return 24f + 32f + 6f; // 헤더 + 행(28+4) + 하단 여백
+        }
+
         private float DrawTechprintSourcesSection(ResearchProjectDef def, float padding, float y, float contentWidth)
         {
             float startY = y;
@@ -816,6 +854,9 @@ namespace YART
 
             // 요구 작업대/시설 (DrawRequirementsSection과 동일 위치/높이)
             height += MeasureRequirementsHeight(node);
+
+            // Medieval Overhaul 도식 (DrawSchematicSection과 동일 위치/높이)
+            height += MeasureSchematicHeight(node);
 
             // 잠금 사유 (DrawLeftPanel의 렌더링과 동일한 계산이어야 함)
             if (node.State == ResearchNodeState.Locked)
