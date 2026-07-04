@@ -108,6 +108,66 @@ namespace YART.Utils
             return cy;
         }
 
+        public static float Measure(float width, List<UnlockedGroup> groups, bool expanded, float iconSize)
+        {
+            if (groups == null) return 0f;
+            float h = 0f;
+            foreach (var g in groups)
+            {
+                if (g.Defs.Count == 0) continue;
+                if (g.AlsoNeeds.Count > 0)
+                    h += MeasureGroupHeader(width, g.AlsoNeeds);
+                h += expanded
+                    ? MeasureList(g.Defs)
+                    : MeasureIcons(width, g.Defs, iconSize);
+            }
+            return h;
+        }
+
+        private static float MeasureGroupHeader(float width, List<ResearchProjectDef> alsoNeeds)
+        {
+            const float lineH = 22f;
+            using (Temporary.Font(GameFont.Tiny))
+            {
+                float startX = 4f;
+                float maxX = width;
+                float curX = startX;
+                int lines = 1;
+
+                curX += Text.CalcSize((string)"UnlockedWith".Translate() + " ").x;
+
+                for (int i = 0; i < alsoNeeds.Count; i++)
+                {
+                    float tw = Text.CalcSize((string)alsoNeeds[i].LabelCap).x;
+                    if (curX + tw > maxX && curX > startX)
+                    {
+                        curX = startX;
+                        lines++;
+                    }
+                    curX += tw;
+                    if (i < alsoNeeds.Count - 1)
+                        curX += Text.CalcSize(", ").x;
+                }
+                return lines * lineH;
+            }
+        }
+
+        private static float MeasureList(List<Def> defs)
+        {
+            const float rowH = 30f, rowGap = 2f;
+            int rows = Mathf.CeilToInt(defs.Count / 2f);
+            return rows * (rowH + rowGap);
+        }
+
+        private static float MeasureIcons(float width, List<Def> defs, float iconSize)
+        {
+            const float gap = 6f;
+            int perRow = Mathf.FloorToInt((width + gap) / (iconSize + gap));
+            if (perRow < 1) perRow = 1;
+            int rows = Mathf.CeilToInt((float)defs.Count / perRow);
+            return rows * (iconSize + gap);
+        }
+
         private static float DrawGroupHeader(float x, float cy, float width,
             List<ResearchProjectDef> alsoNeeds, Action<ResearchProjectDef> onResearchClick)
         {

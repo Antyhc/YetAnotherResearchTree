@@ -851,27 +851,14 @@ namespace YART
 
             // Unlocked Content
             height += 29; // Header
-            var unlocked = node.UnlockedDefs;
-            if (unlocked.Count == 0)
+            if (node.UnlockedDefs.Count == 0)
             {
                 height += 26;
             }
-            else if (YARTMod.Settings.unlockedContentExpanded)
-            {
-                // 2-column(아이콘+라벨) — 그리기와 동일한 행 높이
-                const float rowH = 30f, rowGap = 2f;
-                int rows = Mathf.CeilToInt(unlocked.Count / 2f);
-                height += rows * (rowH + rowGap);
-            }
             else
             {
-                float iconSize = 32f;
-                float gap = 6f;
-                int iconsPerRow = Mathf.FloorToInt((contentWidth + gap) / (iconSize + gap));
-                if (iconsPerRow < 1) iconsPerRow = 1;
-
-                int rows = Mathf.CeilToInt((float)unlocked.Count / iconsPerRow);
-                height += rows * (iconSize + gap);
+                height += UnlockedDefsUtility.Measure(contentWidth, node.UnlockedDefsGrouped,
+                    YARTMod.Settings.unlockedContentExpanded, 32f);
             }
             height += 8;
 
