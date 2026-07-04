@@ -44,6 +44,9 @@ namespace YART
         // Semi Random Research 호환 기능. on(기본) = SRR 감지 시 연구 큐 조작 차단
         public bool semiRandomCompatEnabled = true;
 
+        // Stored Research 호환 기능. on(기본) = 감지 시 누적 연구 포인트를 상단 큐 바에 표시
+        public bool storedResearchCompatEnabled = true;
+
         // 연구창을 열 때 게임을 일시정지하고 닫을 때 복원할지. off(기본). MP 세션에선 무시.
         public bool pauseGameWhenOpen = false;
 
@@ -65,6 +68,7 @@ namespace YART
             Scribe_Values.Look(ref focusHighlightDimming,     "focusHighlightDimming",     false);
             Scribe_Values.Look(ref completionLetterInsteadOfDialog, "completionLetterInsteadOfDialog", true);
             Scribe_Values.Look(ref semiRandomCompatEnabled,    "semiRandomCompatEnabled",    true);
+            Scribe_Values.Look(ref storedResearchCompatEnabled, "storedResearchCompatEnabled", true);
             Scribe_Values.Look(ref pauseGameWhenOpen,          "pauseGameWhenOpen",          false);
             Scribe_Values.Look(ref activeColorPreset, "activeColorPreset", ColorPalettes.DefaultId);
             Scribe_Collections.Look(ref eraColors, "eraColors", LookMode.Value);
@@ -317,6 +321,14 @@ namespace YART
             Hint(listing, (SemiRandomResearchCompat.Detected
                 ? "YART_Settings_SemiRandomDetected"
                 : "YART_Settings_SemiRandomNotDetected").Translate());
+
+            listing.Gap(8f);
+
+            listing.CheckboxLabeled("YART_Settings_StoredResearchCompat".Translate(), ref storedResearchCompatEnabled,
+                "YART_Settings_StoredResearchCompatDesc".Translate());
+            Hint(listing, (StoredResearchCompat.Detected
+                ? "YART_Settings_StoredResearchDetected"
+                : "YART_Settings_StoredResearchNotDetected").Translate());
         }
 
     }

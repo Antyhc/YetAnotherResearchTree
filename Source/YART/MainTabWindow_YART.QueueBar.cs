@@ -24,6 +24,9 @@ namespace YART
 
             queueBarHoveredDef = null;
 
+            // Stored Research 누적 포인트 칩 (우측 끝, 큐가 비어도 표시)
+            float storedChipReserved = DrawStoredResearchChip(rect);
+
             // 빈 큐
             if (queue.Count == 0 && draggedQueueDef == null)
             {
@@ -31,7 +34,8 @@ namespace YART
                 using (Temporary.Anchor(TextAnchor.MiddleLeft))
                 using (Temporary.Color(new Color(0.45f, 0.5f, 0.6f)))
                 {
-                    Widgets.Label(new Rect(rect.x + leftInset + 12f, rect.y, rect.width - leftInset - 24f, rect.height),
+                    Widgets.Label(new Rect(rect.x + leftInset + 12f, rect.y,
+                            rect.width - leftInset - 24f - storedChipReserved, rect.height),
                         "YART_QueueEmpty".Translate());
                 }
                 return;
@@ -40,11 +44,12 @@ namespace YART
             // 개발자 모드
             Rect scrollRect = rect;
             scrollRect.xMin += leftInset;
+            scrollRect.width -= storedChipReserved;
             bool hasDevPanel = Prefs.DevMode && queue.Count > 0;
             if (hasDevPanel)
             {
                 const float devWidth = 250f;
-                Rect devRect = new Rect(rect.xMax - devWidth, rect.y, devWidth, rect.height);
+                Rect devRect = new Rect(rect.xMax - storedChipReserved - devWidth, rect.y, devWidth, rect.height);
                 scrollRect.width -= devWidth;
                 DrawQueueDevControls(devRect, queue[0]);
             }
@@ -53,7 +58,7 @@ namespace YART
             if (!SemiRandomResearchCompat.Active)
             {
                 const float clearW = 60f;
-                float clearRight = hasDevPanel ? rect.xMax - 250f : rect.xMax;
+                float clearRight = rect.xMax - storedChipReserved - (hasDevPanel ? 250f : 0f);
                 Rect clearRect = new Rect(clearRight - clearW - 8f, rect.y + 10f, clearW, rect.height - 24f);
                 scrollRect.width -= (clearW + 16f);
                 if (DrawPanelButton(clearRect, "YART_Clear".Translate(), new Color(0.7f, 0.35f, 0.3f), enabled: true))
@@ -126,6 +131,50 @@ namespace YART
             }
 
             Widgets.EndScrollView();
+        }
+
+        /// <summary>
+        /// Stored Research 호환: 누적 연구 포인트 칩 (큐 바 우측 끝).
+        /// 그렸으면 소비한 가로폭(여백 포함)을, 비활성이면 0을 반환한다.
+        /// </summary>
+        private float DrawStoredResearchChip(Rect barRect)
+        {
+            if (!StoredResearchCompat.Active) return 0f;
+
+            string label = StoredResearchCompat.TotalStored.ToString("F0");
+            bool hasIcon = StoredResearchCompat.Icon != null;
+            float chipW;
+            using (Temporary.Font(GameFont.Small))
+                chipW = 8f + (hasIcon ? 22f : 0f) + Text.CalcSize(label).x + 10f;
+
+            Rect chipRect = new Rect(barRect.xMax - chipW - 8f, barRect.y + 10f, chipW, barRect.height - 24f);
+
+            Widgets.DrawBoxSolid(chipRect, new Color(0f, 0f, 0f, 0.4f));
+            GUIDrawingUtilities.DrawBorderLines(chipRect, Constraints.PanelBorder, 1f);
+            if (Mouse.IsOver(chipRect)) Widgets.DrawHighlight(chipRect);
+
+            float x = chipRect.x + 8f;
+            if (hasIcon)
+            {
+                const float isz = 18f;
+                GUI.DrawTexture(new Rect(x, chipRect.center.y - isz / 2f, isz, isz), StoredResearchCompat.Icon);
+                x += 22f;
+            }
+            using (Temporary.Font(GameFont.Small))
+            using (Temporary.Anchor(TextAnchor.MiddleLeft))
+            using (Temporary.Color(new Color(0.82f, 0.87f, 0.97f)))
+            {
+                Widgets.Label(new Rect(x, chipRect.y, chipRect.xMax - x, chipRect.height), label);
+            }
+
+            TooltipHandler.TipRegion(chipRect, new TipSignal(StoredResearchCompat.BuildTooltip, 84921733));
+            if (Widgets.ButtonInvisible(chipRect))
+            {
+                StoredResearchCompat.OpenInfoDialog();
+                SoundDefOf.Click.PlayOneShotOnCamera();
+            }
+
+            return chipW + 16f;
         }
 
         private void DrawQueueDevControls(Rect rect, ResearchProjectDef head)
