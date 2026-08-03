@@ -150,6 +150,8 @@ namespace YART.Data
         {
             if (def == null || def.IsFinished) return;
 
+            Dictionary<ResearchChannel, ResearchProjectDef> oldHeads = null;
+
             if (!toFront)
             {
                 foreach (var d in CollectMissingChain(def))
@@ -173,9 +175,11 @@ namespace YART.Data
                     list.Add(d);
                 }
 
+                oldHeads = new Dictionary<ResearchChannel, ResearchProjectDef>();
                 foreach (var kvp in byChannel)
                 {
                     var q = GetOrAddQueue(kvp.Key);
+                    oldHeads[kvp.Key] = q.Count > 0 ? q[0] : null;
                     foreach (var d in kvp.Value) q.Remove(d);
                     for (int i = 0; i < kvp.Value.Count; i++) q.Insert(i, kvp.Value[i]);
                 }
@@ -184,6 +188,21 @@ namespace YART.Data
             foreach (var channel in queues.Keys.ToList())
             {
                 EnsureTopologicalOrder(channel);
+            }
+
+            if (oldHeads != null)
+            {
+                foreach (var kvp in oldHeads)
+                {
+                    var q = GetOrAddQueue(kvp.Key);
+                    var newHead = q.Count > 0 ? q[0] : null;
+                    if (newHead != null && newHead != kvp.Value
+                        && !Find.ResearchManager.IsCurrentProject(newHead)
+                        && newHead.CanStartNow)
+                    {
+                        TryBeginProject(newHead, playSound: false); // 사운드는 아래 PlayActionSound가 일괄 재생
+                    }
+                }
             }
 
             // 큐에 추가하면 연구 시작 사운드(바닐라 ResearchStart) 재생

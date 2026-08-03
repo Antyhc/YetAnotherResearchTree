@@ -29,6 +29,12 @@ namespace YART
         // 연구 캔버스 배경으로 격자를 사용할지
         public bool gridBackground = true;
 
+        // 노드 우측에 출처(모드/DLC) 아이콘을 표시할지. ResearchNodeIconExtension 오버라이드도 이 토글을 따름.
+        public bool showNodeSourceIcon = true;
+
+        // 숨겨진 선행 연구(hiddenPrerequisites)를 트리 엣지로 연결할지. off(기본) = 바닐라처럼 패널에만 표시.
+        public bool includeHiddenPrerequisites = false;
+
         // 선행이 더 높은 시대인 연구의 색을 유효(배치) 시대로 통일할지. off = 본래 시대 색 유지.
         public bool unifyEraColorToEffective = false;
 
@@ -63,6 +69,8 @@ namespace YART
             Scribe_Values.Look(ref unifiedBenchView,          "unifiedBenchView",          true);
             Scribe_Values.Look(ref groupClusterByTab,         "groupClusterByTab",         true);
             Scribe_Values.Look(ref gridBackground,            "gridBackground",            true);
+            Scribe_Values.Look(ref showNodeSourceIcon,        "showNodeSourceIcon",        true);
+            Scribe_Values.Look(ref includeHiddenPrerequisites, "includeHiddenPrerequisites", false);
             Scribe_Values.Look(ref unifyEraColorToEffective,  "unifyEraColorToEffective",  false);
             Scribe_Values.Look(ref unlockedContentExpanded,   "unlockedContentExpanded",   false);
             Scribe_Values.Look(ref focusHighlightDimming,     "focusHighlightDimming",     false);
@@ -215,8 +223,14 @@ namespace YART
             listing.CheckboxLabeled("YART_Settings_GridBackground".Translate(), ref gridBackground,
                 "YART_Settings_GridBackgroundDesc".Translate());
 
+            listing.CheckboxLabeled("YART_Settings_ShowSourceIcon".Translate(), ref showNodeSourceIcon,
+                "YART_Settings_ShowSourceIconDesc".Translate());
+
             listing.CheckboxLabeled("YART_Settings_GroupClusterByTab".Translate(), ref groupClusterByTab,
                 "YART_Settings_GroupClusterByTabDesc".Translate());
+
+            listing.CheckboxLabeled("YART_Settings_HiddenPrereqs".Translate(), ref includeHiddenPrerequisites,
+                "YART_Settings_HiddenPrereqsDesc".Translate());
 
             listing.CheckboxLabeled("YART_Settings_EraColor".Translate(), ref unifyEraColorToEffective,
                 "YART_Settings_EraColorDesc".Translate());
@@ -225,7 +239,25 @@ namespace YART
                 "YART_Settings_FocusDimmingDesc".Translate());
 
             listing.GapLine(8f);
-            if (listing.ButtonText("YART_Settings_Rebuild".Translate()))
+
+            bool? appliedGroup = GraphBuildPipeline.AppliedGroupClusterByTab;
+            bool? builtHidden = ResearchGraph.Instance?.BuiltWithHiddenPrereqs;
+            bool rebuildNeeded = (appliedGroup != null && appliedGroup != groupClusterByTab)
+                              || (builtHidden != null && builtHidden != includeHiddenPrerequisites);
+
+            if (rebuildNeeded)
+            {
+                // 큰 글씨(Medium)로 강조 — 설명 툴팁이 아니라 여기서만 재생성 필요를 알린다
+                using (Temporary.Font(GameFont.Medium))
+                    listing.Label("<color=#FFB84D>" + "YART_Settings_RebuildNeeded".Translate() + "</color>");
+                listing.Gap(4f);
+            }
+
+            var prevBtnColor = GUI.color;
+            if (rebuildNeeded) GUI.color = new Color(1f, 0.8f, 0.35f); // 버튼 강조 (주황 틴트)
+            bool rebuildClicked = listing.ButtonText("YART_Settings_Rebuild".Translate());
+            GUI.color = prevBtnColor;
+            if (rebuildClicked)
             {
                 GraphBuildPipeline.RebuildNonBlocking();
             }

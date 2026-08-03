@@ -129,6 +129,7 @@
         <Compile Include="Patches.cs" />
         <Compile Include="YARTMod.cs" />
         <Compile Include="YARTModSettings.cs" />
+        <Compile Include="ResearchNodeExtension.cs" />
         <Compile Include="LayoutExport.cs" />
         <Compile Include="SugiyamaLayout.cs" />
     </ItemGroup>

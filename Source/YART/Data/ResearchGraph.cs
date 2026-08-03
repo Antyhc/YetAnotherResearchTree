@@ -176,6 +176,8 @@ namespace YART.Data
 
         public bool Initialized => _initialized;
 
+        public bool? BuiltWithHiddenPrereqs { get; private set; }
+
         private ResearchSubGraph GetOrAddSubGraph(GraphKey key)
         {
             if (!SubGraphs.TryGetValue(key, out var sub))
@@ -300,21 +302,25 @@ namespace YART.Data
 
         private void BuildConnections()
         {
+            bool includeHidden = YARTMod.Settings.includeHiddenPrerequisites;
+            BuiltWithHiddenPrereqs = includeHidden;
             foreach (var node in AllNodes.Values)
             {
                 var def = node.Def;
 
-                // 명시적 선행 연구 (prerequisites)만 연결
-                // 바닐라와 동일하게 hiddenPrerequisites는 그래프에 연결하지 않음
-                if (def.prerequisites != null)
+                ConnectPrereqList(node, def.prerequisites);
+                if (includeHidden) ConnectPrereqList(node, def.hiddenPrerequisites);
+            }
+        }
+
+        private void ConnectPrereqList(ResearchNode node, List<ResearchProjectDef> prereqDefs)
+        {
+            if (prereqDefs == null) return;
+            foreach (var prereqDef in prereqDefs)
+            {
+                if (AllNodes.TryGetValue(prereqDef, out var prereqNode))
                 {
-                    foreach (var prereqDef in def.prerequisites)
-                    {
-                        if (AllNodes.TryGetValue(prereqDef, out var prereqNode))
-                        {
-                            ConnectNodes(prereqNode, node);
-                        }
-                    }
+                    ConnectNodes(prereqNode, node);
                 }
             }
         }
@@ -534,22 +540,12 @@ namespace YART.Data
                 }
             }
 
+            bool includeHidden = YARTMod.Settings.includeHiddenPrerequisites;
             foreach (var copy in nodeByDef.Values)
             {
-                if (copy.Def.prerequisites == null) continue;
-
-                foreach (var prereqDef in copy.Def.prerequisites)
-                {
-                    if (nodeByDef.TryGetValue(prereqDef, out var prereqCopy))
-                    {
-                        ConnectUnifiedNodes(prereqCopy, copy, subGraph);
-                    }
-                    else if (AllNodes.TryGetValue(prereqDef, out var canonicalNode))
-                    {
-                        var proxy = GetOrCreateProxy(canonicalNode, key);
-                        ConnectUnifiedNodes(proxy, copy, subGraph);
-                    }
-                }
+                ConnectMergedPrereqList(copy, copy.Def.prerequisites, nodeByDef, key, subGraph);
+                if (includeHidden)
+                    ConnectMergedPrereqList(copy, copy.Def.hiddenPrerequisites, nodeByDef, key, subGraph);
             }
 
             {
@@ -572,6 +568,24 @@ namespace YART.Data
             }
 
             return subGraph;
+        }
+
+        private void ConnectMergedPrereqList(ResearchNode copy, List<ResearchProjectDef> prereqDefs,
+            Dictionary<ResearchProjectDef, ResearchNode> nodeByDef, GraphKey key, ResearchSubGraph subGraph)
+        {
+            if (prereqDefs == null) return;
+            foreach (var prereqDef in prereqDefs)
+            {
+                if (nodeByDef.TryGetValue(prereqDef, out var prereqCopy))
+                {
+                    ConnectUnifiedNodes(prereqCopy, copy, subGraph);
+                }
+                else if (AllNodes.TryGetValue(prereqDef, out var canonicalNode))
+                {
+                    var proxy = GetOrCreateProxy(canonicalNode, key);
+                    ConnectUnifiedNodes(proxy, copy, subGraph);
+                }
+            }
         }
 
         private static void ConnectUnifiedNodes(ResearchNode from, ResearchNode to, ResearchSubGraph subGraph)

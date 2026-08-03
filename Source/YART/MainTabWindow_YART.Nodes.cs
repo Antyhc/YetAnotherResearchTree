@@ -754,6 +754,10 @@ namespace YART
 
             // 비용 (가장 오른쪽) — CostApparent (Cost = baseCost 또는 knowledgeCost, × 테크레벨 계수)
             string costStr = realNode.Def.CostApparent.ToString("N0");
+            if (realNode.State != ResearchNodeState.Completed && realNode.Progress > 0f)
+            {
+                costStr = $"{realNode.Def.ProgressApparentString}/{costStr}";
+            }
             float costW = Text.CalcSize(costStr).x;
             GUI.color = new Color(0.72f, 0.79f, 0.88f, alpha);
             Widgets.Label(new Rect(right - costW, rowY, costW, rowH), costStr);
@@ -832,14 +836,13 @@ namespace YART
             return tex;
         }
 
-        /// <summary>
-        /// 노드 우측(세로 중앙)에 출처 모드/DLC 아이콘을 그린다. 미발견·아이콘 없음이면 생략.
-        /// 큐 배지(▶/#N)가 있으면 그만큼 왼쪽으로 비켜 겹침을 피한다.
-        /// </summary>
         private void DrawNodeModIcon(ResearchNode node, Rect nodeRectScreen, float zoom, float alpha, Color restoreColor)
         {
+            if (!YARTMod.Settings.showNodeSourceIcon) return;
             if (node.IsHidden) return; // 미발견 연구는 출처 노출 안 함
-            var icon = GetModIcon(node.SourceMod);
+
+            var def = node.IsProxy ? node.OriginalNode?.Def : node.Def;
+            var icon = def?.GetModExtension<ResearchNodeExtension>()?.Icon ?? GetModIcon(node.SourceMod);
             if (icon == null) return;
 
             Rect r = ModIconSlot(node, nodeRectScreen, zoom);

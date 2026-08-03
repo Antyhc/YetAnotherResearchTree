@@ -38,6 +38,11 @@
   <YART_Settings_GridBackgroundDesc>켜면 연구 트리 뒤에 청사진 격자(선과 교차점)를 그립니다. 끄면 격자 없이 어두운 배경만 유지합니다.</YART_Settings_GridBackgroundDesc>
   <YART_Settings_GroupClusterByTab>전체 탭 및 프리셋 연구 트리에서 연구 탭 별로 연구 묶기 (기본값: O)</YART_Settings_GroupClusterByTab>
   <YART_Settings_GroupClusterByTabDesc>여러 개의 연구 탭이 합쳐진 연구 트리를 가능한 한 같은 연구 탭끼리 가까히 배치되도록 합니다.</YART_Settings_GroupClusterByTabDesc>
+  <YART_Settings_ShowSourceIcon>연구 노드에 아이콘 표시 (기본값: O)</YART_Settings_ShowSourceIcon>
+  <YART_Settings_ShowSourceIconDesc>켜면 각 연구 노드 우측에 모드/DLC 아이콘을 표시합니다.</YART_Settings_ShowSourceIconDesc>
+  <YART_Settings_HiddenPrereqs>숨겨진 선행 연구를 트리에 연결 (기본값: X)</YART_Settings_HiddenPrereqs>
+  <YART_Settings_HiddenPrereqsDesc>켜면 숨겨진 선행 연구(hiddenPrerequisites)를 일반 선행처럼 연구 트리 엣지로 연결하여 표시합니다.</YART_Settings_HiddenPrereqsDesc>
+  <YART_Settings_RebuildNeeded>변경한 설정이 아직 적용되지 않았습니다. 아래 '연구 그래프 재생성' 버튼을 누르세요.</YART_Settings_RebuildNeeded>
   <YART_Settings_Rebuild>연구 그래프 재생성</YART_Settings_Rebuild>
   <YART_Settings_RebuildDesc>백그라운드에서 트리를 다시 생성합니다.</YART_Settings_RebuildDesc>
   <YART_Settings_ExportGraph>연구 트리 구조 내보내기 (개발용)</YART_Settings_ExportGraph>

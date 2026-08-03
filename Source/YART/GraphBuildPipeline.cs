@@ -119,12 +119,15 @@ namespace YART
             graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
         }
 
+        public static bool? AppliedGroupClusterByTab { get; private set; }
+
         private static void RunLayoutAndSearch()
         {
             var graph = ResearchGraph.Instance;
             LayoutExport.Begin();
 
             SugiyamaLayout.GroupClusteringEnabled = YARTMod.Settings.groupClusterByTab;
+            AppliedGroupClusterByTab = SugiyamaLayout.GroupClusteringEnabled;
 
             // 1. 일반 탭 서브그래프 레이아웃 (병렬)
             Parallel.ForEach(graph.SubGraphs.Values.ToList(),

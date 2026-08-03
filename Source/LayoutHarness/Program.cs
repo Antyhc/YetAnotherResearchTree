@@ -34,14 +34,6 @@ namespace LayoutHarness
                 return 0;
             }
 
-            var picked = dump.FirstOrDefault(g => g.Key == opt.Graph)
-                       ?? dump.FirstOrDefault(g => g.Key.IndexOf(opt.Graph, StringComparison.OrdinalIgnoreCase) >= 0);
-            if (picked == null)
-            {
-                Console.Error.WriteLine($"그래프 '{opt.Graph}' 없음. --list 로 키 확인.");
-                return 1;
-            }
-
             Prefs.DevMode = opt.DevMode;
             YART.SugiyamaLayout.GroupClusteringEnabled = opt.Group;
 
@@ -53,6 +45,14 @@ namespace LayoutHarness
                 if (IsMergedKey(g.Key)) continue;
                 foreach (var n in g.Nodes)
                     if (!groupMap.ContainsKey(n.Id)) groupMap[n.Id] = g.Key;
+            }
+
+            var picked = dump.FirstOrDefault(g => g.Key == opt.Graph)
+                       ?? dump.FirstOrDefault(g => g.Key.IndexOf(opt.Graph, StringComparison.OrdinalIgnoreCase) >= 0);
+            if (picked == null)
+            {
+                Console.Error.WriteLine($"그래프 '{opt.Graph}' 없음. --list 로 키 확인.");
+                return 1;
             }
 
             var graph = BuildGraph(picked, groupMap);
