@@ -43,6 +43,9 @@ namespace YART.Data
         // Unified Bench Toggle
         public const float UnifiedBenchToggleWidth = 90f;
 
+        // Search Box
+        public const float SearchBoxWidth = UnifiedBenchToggleWidth + 8f + TabDropdownWidth + 6f + TabPlusButtonSize;
+
         /// <summary>미지(모드) 지식 카테고리 채널용 색 팔레트</summary>
         public static readonly Color[] ChannelPalette =
         {

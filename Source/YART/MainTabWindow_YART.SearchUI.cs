@@ -189,7 +189,14 @@ namespace YART
                     : resNode.Key.Channel.Label;
             }
 
-            float sideWidth = side == null ? 0f : 96f;
+            float sideWidth = 0f;
+            if (side != null)
+            {
+                using (Temporary.Font(GameFont.Tiny))
+                {
+                    sideWidth = Mathf.Min(Text.CalcSize(side).x + 10f, 96f);
+                }
+            }
             Rect labelRect = new Rect(rowRect.x + 18f, rowRect.y, rowRect.width - 22f - sideWidth, rowRect.height);
             using (Temporary.Font(GameFont.Small))
             using (Temporary.Anchor(TextAnchor.MiddleLeft))
@@ -203,7 +210,7 @@ namespace YART
                 using (Temporary.Anchor(TextAnchor.MiddleRight))
                 using (Temporary.Color(new Color(0.5f, 0.55f, 0.65f)))
                 {
-                    Widgets.Label(new Rect(rowRect.x, rowRect.y, rowRect.width - 6f, rowRect.height), side.Truncate(sideWidth));
+                    Widgets.Label(new Rect(rowRect.x, rowRect.y, rowRect.width - 6f, rowRect.height), side.Truncate(sideWidth - 6f));
                 }
             }
 

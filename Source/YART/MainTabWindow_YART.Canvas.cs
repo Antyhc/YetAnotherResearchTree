@@ -343,7 +343,7 @@ namespace YART
         }
 
         /// <summary>
-        /// WASD로 캔버스를 패닝한다. KeyDown 이벤트가 아닌 Input.GetKey를 매 프레임 폴링해
+        /// 맵 이동 키로 캔버스를 패닝한다. KeyDown 이벤트가 아닌 키 상태를 매 프레임 폴링해
         /// 부드러운 연속 이동을 구현. 일시정지 중에도 동작하도록 Time.realtimeSinceStartup 기준 dt 사용.
         /// Repaint 패스에서만 적용해 프레임당 1회 이동(같은 프레임 다중 이벤트 중복 가산 방지).
         /// </summary>
@@ -362,10 +362,10 @@ namespace YART
             if (dt <= 0f || dt > 0.2f) return;
 
             Vector2 dir = Vector2.zero;
-            if (Input.GetKey(KeyCode.W)) dir.y += 1f; // 카메라 위로 = 위쪽 콘텐츠 노출
-            if (Input.GetKey(KeyCode.S)) dir.y -= 1f;
-            if (Input.GetKey(KeyCode.A)) dir.x += 1f;
-            if (Input.GetKey(KeyCode.D)) dir.x -= 1f;
+            if (KeyBindingDefOf.MapDolly_Up.IsDown) dir.y += 1f;
+            if (KeyBindingDefOf.MapDolly_Down.IsDown) dir.y -= 1f;
+            if (KeyBindingDefOf.MapDolly_Left.IsDown) dir.x += 1f;
+            if (KeyBindingDefOf.MapDolly_Right.IsDown) dir.x -= 1f;
             if (dir == Vector2.zero) return;
 
             scrollAnimating = false; // 유저 입력 = 포커스 애니메이션 취소

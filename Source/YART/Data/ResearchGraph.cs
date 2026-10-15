@@ -254,8 +254,7 @@ namespace YART.Data
 
         private void CreateNodes()
         {
-            var allDefs = DefDatabase<ResearchProjectDef>.AllDefsListForReading;
-            foreach (var def in allDefs)
+            foreach (var def in DefSnapshot.ResearchProjects)
             {
                 // World Tech Level: 월드 테크레벨 초과 연구를 그래프에서 제외
                 // (WTL이 바닐라 연구 목록에서 RemoveAll 하는 것과 동일 — 미설치 시 항상 true)

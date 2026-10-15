@@ -240,37 +240,13 @@ namespace YART.Data
 
         public List<Def> UnlockedDefs => _cachedUnlockedDefs ?? (_cachedUnlockedDefs = BuildUnlockedDefs());
 
-        /// <summary>def의 명시적 해금 목록 + 역참조 DefDatabase 스캔 (바닐라와 동일한 방식).</summary>
         private List<Def> BuildUnlockedDefs()
         {
             var unlocked = new List<Def>();
             if (IsDummy || IsProxy || Def == null) return unlocked;
 
             if (Def.UnlockedDefs != null) unlocked.AddRange(Def.UnlockedDefs);
-
-            foreach (var thingDef in DefDatabase<ThingDef>.AllDefsListForReading)
-            {
-                bool byBuild = thingDef.researchPrerequisites != null && thingDef.researchPrerequisites.Contains(Def);
-                bool bySow = thingDef.plant?.sowResearchPrerequisites != null && thingDef.plant.sowResearchPrerequisites.Contains(Def);
-                if (byBuild || bySow) unlocked.Add(thingDef);
-            }
-
-            foreach (var terrainDef in DefDatabase<TerrainDef>.AllDefsListForReading)
-            {
-                if (terrainDef.researchPrerequisites != null && terrainDef.researchPrerequisites.Contains(Def))
-                {
-                    unlocked.Add(terrainDef);
-                }
-            }
-
-            foreach (var recipeDef in DefDatabase<RecipeDef>.AllDefsListForReading)
-            {
-                if (recipeDef.researchPrerequisite == Def
-                    || (recipeDef.researchPrerequisites != null && recipeDef.researchPrerequisites.Contains(Def)))
-                {
-                    unlocked.Add(recipeDef);
-                }
-            }
+            unlocked.AddRange(DefSnapshot.ReverseUnlocksOf(Def));
 
             return unlocked.Distinct().ToList();
         }

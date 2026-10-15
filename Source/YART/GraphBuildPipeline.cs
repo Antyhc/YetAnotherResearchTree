@@ -38,6 +38,7 @@ namespace YART
                 WarmUnlockedDefsCache();
                 LongEventHandler.ExecuteWhenFinished(() =>
                 {
+                    DefSnapshot.Capture();
                     graphBuildTask = Task.Run(() =>
                     {
                         try { build(); }
@@ -81,6 +82,7 @@ namespace YART
             var task = graphBuildTask;
             if (!graphReady && (task == null || task.IsCompleted))
             {
+                DefSnapshot.Capture();
                 BuildGraphAndLayout();
             }
         }
@@ -105,6 +107,7 @@ namespace YART
             // 백그라운드 실패/미시작 폴백 (예외는 태스크 안에서 처리되므로 여기선 상태로 판단)
             if (!graphReady)
             {
+                DefSnapshot.Capture();
                 BuildGraphAndLayout();
             }
         }
@@ -193,6 +196,7 @@ namespace YART
             if (preset == null) return;
 
             graphReady = false;
+            if (!ResearchGraph.Instance.Initialized) DefSnapshot.Capture();
 
             var prev = graphBuildTask;
             graphBuildTask = Task.Run(() =>
@@ -232,6 +236,7 @@ namespace YART
 
                 var stopwatch = Stopwatch.StartNew();
                 graphReady = false;
+                DefSnapshot.Capture();
                 RebuildEverything();
                 LogElapsed(stopwatch, "RebuildNow completed", $" (generation {Generation})");
             }
@@ -269,6 +274,7 @@ namespace YART
         {
             graphReady = false;
             WarmUnlockedDefsCache();
+            DefSnapshot.Capture();
             var prev = graphBuildTask;
             graphBuildTask = Task.Run(() =>
             {

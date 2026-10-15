@@ -70,7 +70,7 @@ namespace YART
                 if (!ViewingAllTabs)
                     row1 += Constraints.TabDropdownWidth + 6f + Constraints.TabPlusButtonSize + 8f;
             }
-            float content = Mathf.Max(row1, 220f);
+            float content = Mathf.Max(row1, Constraints.SearchBoxWidth);
             return new Rect(0f, 0f, 16f + content + 16f, Constraints.QueueBarHeight);
         }
 
@@ -119,7 +119,7 @@ namespace YART
 
             // 2행: 검색창 (탭 행이 있으면 그 아래, 없으면 맨 위 자리)
             float searchY = hasTabRow ? y1 + Constraints.TabDropdownHeight + 6f : y1;
-            Rect searchRect = new Rect(x0, searchY, 220f, searchH);
+            Rect searchRect = new Rect(x0, searchY, Constraints.SearchBoxWidth, searchH);
             DoSearchBox(searchRect);
         }
 
