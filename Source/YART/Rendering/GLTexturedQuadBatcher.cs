@@ -27,6 +27,10 @@ namespace YART.Rendering
 
             Shader shader = Shader.Find("GUI/Text Shader") ?? Shader.Find("Hidden/Internal-Colored");
 
+#if RW17
+            // 1.7+: 항상 알파 블렌딩이라 의미 없음
+            mat = new Material(shader) { mainTexture = tex };
+#else
             mat = new Material(shader)
             {
                 hideFlags = HideFlags.HideAndDontSave,
@@ -36,6 +40,7 @@ namespace YART.Rendering
             mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
             mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
             mat.SetInt("_ZWrite", 0);
+#endif
             materials[tex] = mat;
             return mat;
         }

@@ -113,6 +113,16 @@ namespace YART.Data
                     }
                 }
 
+                if (char.IsSurrogate(c))
+                {
+                    if (char.IsHighSurrogate(c) && i + 1 < raw.Length && char.IsLowSurrogate(raw[i + 1]))
+                    {
+                        sb.Append(c).Append(raw[i + 1]);
+                        i++;
+                    }
+                    continue;
+                }
+
                 if (TryAppendSpecial(c, sb)) continue; // ß→ss, đ→d 등
 
                 // 라틴 결합표시 제거 + 소문자 (악센트 무시)

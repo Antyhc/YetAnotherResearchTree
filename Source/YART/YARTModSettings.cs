@@ -112,7 +112,7 @@ namespace YART
             });
         }
 
-        // 프리셋 적용 → 8색 덮어쓰기 + 즉시 반영.
+        // 프리셋 적용 → 전체 색 덮어쓰기 + 즉시 반영.
         private void ApplyPreset(string id)
         {
             var p = ColorPalettes.Get(id);
@@ -123,15 +123,16 @@ namespace YART
             ApplyColors();
         }
 
-        private void SetEraColor(int idx, Color c)
+        // 개별 색을 바꾸면 프리셋은 커스텀으로 전환된다.
+        private void MarkCustomAndApply()
         {
-            eraColors[idx] = c;
             activeColorPreset = ColorPalettes.CustomId;
             ApplyColors();
         }
 
-        private void SetPrereqMet(Color c)   { prereqMetColor = c;   activeColorPreset = ColorPalettes.CustomId; ApplyColors(); }
-        private void SetPrereqUnmet(Color c) { prereqUnmetColor = c; activeColorPreset = ColorPalettes.CustomId; ApplyColors(); }
+        private void SetEraColor(int idx, Color c) { eraColors[idx] = c;      MarkCustomAndApply(); }
+        private void SetPrereqMet(Color c)         { prereqMetColor = c;      MarkCustomAndApply(); }
+        private void SetPrereqUnmet(Color c)       { prereqUnmetColor = c;    MarkCustomAndApply(); }
 
         // 좌측 네비게이션의 섹션
         private static readonly string[] SectionKeys =
@@ -239,7 +240,12 @@ namespace YART
                 "YART_Settings_FocusDimmingDesc".Translate());
 
             listing.GapLine(8f);
+            DrawRebuildControls(listing);
+        }
 
+        // 재생성이 필요한 설정(그룹 클러스터링·숨은 선행)이 바뀌었으면 강조해서 알리고, 재생성 버튼을 그린다.
+        private void DrawRebuildControls(Listing_Standard listing)
+        {
             bool? appliedGroup = GraphBuildPipeline.AppliedGroupClusterByTab;
             bool? builtHidden = ResearchGraph.Instance?.BuiltWithHiddenPrereqs;
             bool rebuildNeeded = (appliedGroup != null && appliedGroup != groupClusterByTab)
@@ -247,31 +253,28 @@ namespace YART
 
             if (rebuildNeeded)
             {
-                // 큰 글씨(Medium)로 강조 — 설명 툴팁이 아니라 여기서만 재생성 필요를 알린다
                 using (Temporary.Font(GameFont.Medium))
                     listing.Label("<color=#FFB84D>" + "YART_Settings_RebuildNeeded".Translate() + "</color>");
                 listing.Gap(4f);
             }
 
-            var prevBtnColor = GUI.color;
-            if (rebuildNeeded) GUI.color = new Color(1f, 0.8f, 0.35f); // 버튼 강조 (주황 틴트)
-            bool rebuildClicked = listing.ButtonText("YART_Settings_Rebuild".Translate());
-            GUI.color = prevBtnColor;
+            bool rebuildClicked = false;
+            using (Temporary.Color(rebuildNeeded ? new Color(1f, 0.8f, 0.35f) : GUI.color)) // 재생성 필요 시 주황 틴트
+                rebuildClicked = listing.ButtonText("YART_Settings_Rebuild".Translate());
             if (rebuildClicked)
             {
                 GraphBuildPipeline.RebuildNonBlocking();
             }
             Hint(listing, "YART_Settings_RebuildDesc".Translate());
 
-            if (Prefs.DevMode)
+            if (!Prefs.DevMode) return;
+
+            listing.Gap();
+            if (listing.ButtonText("YART_Settings_ExportGraph".Translate()))
             {
-                listing.Gap();
-                if (listing.ButtonText("YART_Settings_ExportGraph".Translate()))
-                {
-                    LayoutExport.WriteToDesktop();
-                }
-                Hint(listing, "YART_Settings_ExportGraphDesc".Translate());
+                LayoutExport.WriteToDesktop();
             }
+            Hint(listing, "YART_Settings_ExportGraphDesc".Translate());
         }
 
         private void DrawColorsSection(Listing_Standard listing)

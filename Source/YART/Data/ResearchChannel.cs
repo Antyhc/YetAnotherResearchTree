@@ -50,13 +50,18 @@ namespace YART.Data
         public KnowledgeChannel(KnowledgeCategoryDef category, int paletteIndex)
         {
             Category = category;
-            if (category == KnowledgeCategoryDefOf.Basic) color = new Color(0.85f, 0.35f, 0.35f);
-            else if (category == KnowledgeCategoryDefOf.Advanced) color = new Color(0.75f, 0.25f, 0.55f);
-            else color = Constraints.ChannelPalette[paletteIndex % Constraints.ChannelPalette.Length];
+            color = PickColor(category, paletteIndex);
             // 바닐라 아노말리 연구 탭 라벨 + 카테고리 (자동 현지화: 한국어 "이상 현상: 기본/고급")
             string anomalyPrefix = ResearchTabDefOf.Anomaly != null ? (string)ResearchTabDefOf.Anomaly.LabelCap : "Anomaly";
             label = anomalyPrefix + ": " + Category.LabelCap;
             id = "Knowledge_" + Category.defName;
+        }
+
+        private static Color PickColor(KnowledgeCategoryDef category, int paletteIndex)
+        {
+            if (category == KnowledgeCategoryDefOf.Basic) return new Color(0.85f, 0.35f, 0.35f);
+            if (category == KnowledgeCategoryDefOf.Advanced) return new Color(0.75f, 0.25f, 0.55f);
+            return Constraints.ChannelPalette[paletteIndex % Constraints.ChannelPalette.Length];
         }
 
         public override string Id => id;

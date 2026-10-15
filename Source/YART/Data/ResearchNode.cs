@@ -11,24 +11,16 @@ namespace YART.Data
 {
     public enum ResearchNodeState : byte
     {
-        /// <summary>
-        /// 선행 조건이 충족되지 않아 연구 불가
-        /// </summary>
+        /// <summary>선행 조건이 충족되지 않아 연구 불가</summary>
         Locked,
 
-        /// <summary>
-        /// 선행 조건 충족, 연구 시작 가능
-        /// </summary>
+        /// <summary>선행 조건 충족, 연구 시작 가능</summary>
         Available,
 
-        /// <summary>
-        /// 현재 연구 중
-        /// </summary>
+        /// <summary>현재 연구 중</summary>
         InProgress,
 
-        /// <summary>
-        /// 연구 완료
-        /// </summary>
+        /// <summary>연구 완료</summary>
         Completed
     }
 
@@ -37,14 +29,10 @@ namespace YART.Data
     /// </summary>
     public class ResearchNode
     {
-        /// <summary>
-        /// 원본 ResearchProjectDef 참조
-        /// </summary>
+        /// <summary>원본 ResearchProjectDef 참조</summary>
         public ResearchProjectDef Def { get; }
 
-        /// <summary>
-        /// 노드가 속한 병렬 연구 채널
-        /// </summary>
+        /// <summary>노드가 속한 병렬 연구 채널</summary>
         public ResearchChannel Channel { get; }
 
         /// <summary>이 노드가 속한 바닐라 연구 탭 (벤치 채널 전용, 비-벤치는 null)</summary>
@@ -82,70 +70,49 @@ namespace YART.Data
             }
         }
 
-        /// <summary>
-        /// 이 노드가 다른 구역의 연구를 참조하는 프록시 노드인지 여부
-        /// </summary>
+        /// <summary>이 노드가 다른 구역의 연구를 참조하는 프록시 노드인지 여부</summary>
         public bool IsProxy { get; }
 
-        /// <summary>
-        /// 프록시 노드인 경우, 원본 노드에 대한 참조
-        /// </summary>
+        /// <summary>프록시 노드인 경우, 원본 노드에 대한 참조</summary>
         public ResearchNode OriginalNode { get; }
 
-        /// <summary>
-        /// Sugiyama 알고리즘에서 할당된 계층(Rank) 값
-        /// </summary>
+        /// <summary>Sugiyama 알고리즘에서 할당된 계층(Rank) 값</summary>
         public int Rank { get; set; }
 
-        /// <summary>
-        /// 같은 Rank 내에서의 수직 순서 (인덱스)
-        /// </summary>
+        /// <summary>같은 Rank 내에서의 수직 순서 (인덱스)</summary>
         public int VOrder { get; set; }
-
 
         public string GroupKey { get; set; }
 
-        /// <summary>
-        /// 캔버스 상의 위치 (좌상단 기준)
-        /// </summary>
+        /// <summary>캔버스 상의 위치 (좌상단 기준)</summary>
         public Vector2 Position { get; set; }
         public Rect Rect => new Rect(Position.x, Position.y, Constraints.NodeSize.x, Constraints.NodeSize.y);
         public Vector2 Center => new Vector2(Position.x + Constraints.NodeSize.x / 2f, Position.y + Constraints.NodeSize.y / 2f);
 
-        /// <summary>
-        /// 선행 연구 노드들
-        /// </summary>
+        /// <summary>선행 연구 노드들</summary>
         public List<ResearchNode> Prerequisites { get; } = new List<ResearchNode>();
 
         private List<ResearchNode> _cachedAncestors;
 
-        public List<ResearchNode> Ancestors
+        public List<ResearchNode> Ancestors => _cachedAncestors ?? (_cachedAncestors = CollectAncestors());
+
+        private List<ResearchNode> CollectAncestors()
         {
-            get
+            var ancestors = new HashSet<ResearchNode>();
+
+            void Walk(ResearchNode curNode)
             {
-                if (_cachedAncestors == null)
+                foreach (var prereq in curNode.Prerequisites.Where(prereq => ancestors.Add(prereq)))
                 {
-                    var ancestors = new HashSet<ResearchNode>();
-
-                    void CollectAncestors(ResearchNode curNode)
-                    {
-                        foreach (var prereq in curNode.Prerequisites.Where(prereq => ancestors.Add(prereq)))
-                        {
-                            CollectAncestors(prereq);
-                        }
-                    }
-
-                    CollectAncestors(this);
-                    _cachedAncestors = ancestors.ToList();
+                    Walk(prereq);
                 }
-
-                return _cachedAncestors;
             }
+
+            Walk(this);
+            return ancestors.ToList();
         }
 
-        /// <summary>
-        /// 후속 연구 노드들
-        /// </summary>
+        /// <summary>후속 연구 노드들</summary>
         public List<ResearchNode> Children { get; } = new List<ResearchNode>();
 
         // 좌측 패널용 사전 계산 목록 (그래프 빌드에서 채움)
@@ -163,14 +130,10 @@ namespace YART.Data
         // 전역 상태 버전
         private static int _globalStateVersion;
 
-        /// <summary>
-        /// 모든 노드의 상태 캐시를 즉시 무효화합니다
-        /// </summary>
+        /// <summary>모든 노드의 상태 캐시를 즉시 무효화합니다</summary>
         public static void InvalidateAllStates() => _globalStateVersion++;
 
-        /// <summary>
-        /// 현재 연구 상태를 반환합니다. (캐싱 적용)
-        /// </summary>
+        /// <summary>현재 연구 상태를 반환합니다. (캐싱 적용)</summary>
         public ResearchNodeState State
         {
             get
@@ -178,10 +141,8 @@ namespace YART.Data
                 if (IsDummy) return ResearchNodeState.Locked;
                 if (IsProxy) return OriginalNode.State;
 
-                // 백그라운드 스레드(병렬 레이아웃 빌드 등)에서는 재계산 금지 — CalculateState가
-                // CanBeQueuedRecursively → CanStartNow → Find.ResearchManager/맵 폰 등 메인스레드 전용
-                // API를 건드려 MapPawns.AssertMainThread에 걸린다. 레이아웃은 기하만 쓰고 State에
-                // 의존하지 않으므로 캐시값만 반환한다(메인스레드에서 렌더 시 정상 재계산됨).
+                // 백그라운드(레이아웃 빌드)에서는 재계산 금지 — CalculateState가 메인스레드 전용 API를
+                // 건드려 AssertMainThread에 걸린다. 레이아웃은 State를 안 쓰므로 캐시값이면 충분.
                 if (!UnityData.IsInMainThread) return _cachedState;
 
                 // 0.5초마다 갱신
@@ -199,9 +160,7 @@ namespace YART.Data
 
         private bool _cachedHidden;
 
-        /// <summary>
-        /// 아노말리 미발견 연구인가?
-        /// </summary>
+        /// <summary>아노말리 미발견 연구인가?</summary>
         public bool IsHidden
         {
             get
@@ -223,9 +182,7 @@ namespace YART.Data
             return ResearchNodeState.Locked;
         }
 
-        /// <summary>
-        /// 연구 진행률 (0.0 ~ 1.0)
-        /// </summary>
+        /// <summary>연구 진행률 (0.0 ~ 1.0)</summary>
         public float Progress
         {
             get
@@ -281,59 +238,41 @@ namespace YART.Data
 
         private List<Def> _cachedUnlockedDefs;
 
-        public List<Def> UnlockedDefs
+        public List<Def> UnlockedDefs => _cachedUnlockedDefs ?? (_cachedUnlockedDefs = BuildUnlockedDefs());
+
+        /// <summary>def의 명시적 해금 목록 + 역참조 DefDatabase 스캔 (바닐라와 동일한 방식).</summary>
+        private List<Def> BuildUnlockedDefs()
         {
-            get
+            var unlocked = new List<Def>();
+            if (IsDummy || IsProxy || Def == null) return unlocked;
+
+            if (Def.UnlockedDefs != null) unlocked.AddRange(Def.UnlockedDefs);
+
+            foreach (var thingDef in DefDatabase<ThingDef>.AllDefsListForReading)
             {
-                if (_cachedUnlockedDefs == null)
-                {
-                    _cachedUnlockedDefs = new List<Def>();
-                    if (IsDummy || IsProxy || Def == null) return _cachedUnlockedDefs;
-
-                    // 1. Explicit unlocks listed in ResearchProjectDef
-                    if (Def.UnlockedDefs != null)
-                    {
-                        _cachedUnlockedDefs.AddRange(Def.UnlockedDefs);
-                    }
-
-                    // 2. Scan specific DefDatabases for reverse references (the vanilla way)
-                    // Things (Buildings, Items, Plants)
-                    foreach (var thingDef in DefDatabase<ThingDef>.AllDefsListForReading)
-                    {
-                        if (thingDef.researchPrerequisites != null && thingDef.researchPrerequisites.Contains(Def))
-                        {
-                            _cachedUnlockedDefs.Add(thingDef);
-                        }
-                        // Check for plant sow research
-                        else if (thingDef.plant?.sowResearchPrerequisites != null && thingDef.plant.sowResearchPrerequisites.Contains(Def))
-                        {
-                            _cachedUnlockedDefs.Add(thingDef);
-                        }
-                    }
-
-                    // Terrain (Floors)
-                    foreach (var terrainDef in DefDatabase<TerrainDef>.AllDefsListForReading)
-                    {
-                        if (terrainDef.researchPrerequisites != null && terrainDef.researchPrerequisites.Contains(Def))
-                        {
-                            _cachedUnlockedDefs.Add(terrainDef);
-                        }
-                    }
-
-                    // Recipes
-                    foreach (var recipeDef in DefDatabase<RecipeDef>.AllDefsListForReading)
-                    {
-                        if (recipeDef.researchPrerequisite == Def || (recipeDef.researchPrerequisites != null && recipeDef.researchPrerequisites.Contains(Def)))
-                        {
-                            _cachedUnlockedDefs.Add(recipeDef);
-                        }
-                    }
-
-                    // Distinct to remove duplicates just in case
-                    _cachedUnlockedDefs = _cachedUnlockedDefs.Distinct().ToList();
-                }
-                return _cachedUnlockedDefs;
+                bool byBuild = thingDef.researchPrerequisites != null && thingDef.researchPrerequisites.Contains(Def);
+                bool bySow = thingDef.plant?.sowResearchPrerequisites != null && thingDef.plant.sowResearchPrerequisites.Contains(Def);
+                if (byBuild || bySow) unlocked.Add(thingDef);
             }
+
+            foreach (var terrainDef in DefDatabase<TerrainDef>.AllDefsListForReading)
+            {
+                if (terrainDef.researchPrerequisites != null && terrainDef.researchPrerequisites.Contains(Def))
+                {
+                    unlocked.Add(terrainDef);
+                }
+            }
+
+            foreach (var recipeDef in DefDatabase<RecipeDef>.AllDefsListForReading)
+            {
+                if (recipeDef.researchPrerequisite == Def
+                    || (recipeDef.researchPrerequisites != null && recipeDef.researchPrerequisites.Contains(Def)))
+                {
+                    unlocked.Add(recipeDef);
+                }
+            }
+
+            return unlocked.Distinct().ToList();
         }
 
         private List<UnlockedDefsUtility.UnlockedGroup> _cachedUnlockedGroups;
@@ -342,19 +281,10 @@ namespace YART.Data
         public List<UnlockedDefsUtility.UnlockedGroup> UnlockedDefsGrouped =>
             _cachedUnlockedGroups ?? (_cachedUnlockedGroups = UnlockedDefsUtility.GroupUnlockedDefs(UnlockedDefs, Def));
 
-        /// <summary>
-        /// 일반 연구 노드를 생성합니다
-        /// </summary>
+        /// <summary>일반 연구 노드를 생성합니다 (키는 Channel/Tab에서 재계산)</summary>
         public ResearchNode(ResearchProjectDef def, GraphKey key)
+            : this(def, key.Channel, key.Tab, null)
         {
-            Def = def;
-            Channel = key.Channel;
-            Tab = key.Tab;
-            IsProxy = false;
-            OriginalNode = null;
-            IsDummy = false;
-            _keyOverride = null;
-            GroupKey = def?.tab?.defName; // 출처 탭 = 그룹 클러스터링 키 (통합 뷰 세로 묶기용)
         }
 
         public ResearchNode(ResearchNode originalNode, GraphKey targetKey)
@@ -370,7 +300,7 @@ namespace YART.Data
             GroupKey = originalNode.Def?.tab?.defName; // 프록시는 원본 연구의 출처 탭으로 그룹화
         }
 
-        // Private constructor for dummy nodes
+        // 더미 노드 — 소속 그래프 키를 그대로 보존한다
         private ResearchNode(GraphKey key, bool isDummy)
         {
             Def = null;
@@ -379,7 +309,6 @@ namespace YART.Data
             IsProxy = false;
             OriginalNode = null;
             IsDummy = isDummy;
-            // 더미가 속한 그래프 키를 보존
             _keyOverride = key;
         }
 
@@ -388,7 +317,8 @@ namespace YART.Data
             return new ResearchNode(original.Def, original.Channel, original.Tab, targetKey);
         }
 
-        private ResearchNode(ResearchProjectDef def, ResearchChannel channel, ResearchTabDef tab, GraphKey keyOverride)
+        // 실제 노드 공통 생성자. keyOverride != null이면 병합 그래프 소속 복사본
+        private ResearchNode(ResearchProjectDef def, ResearchChannel channel, ResearchTabDef tab, GraphKey? keyOverride)
         {
             Def = def;
             Channel = channel;
@@ -397,7 +327,7 @@ namespace YART.Data
             OriginalNode = null;
             IsDummy = false;
             _keyOverride = keyOverride;
-            GroupKey = def?.tab?.defName; // 통합/프리셋 병합 복사본도 출처 탭으로 그룹화 (누락 시 클러스터링이 no-op됨)
+            GroupKey = def?.tab?.defName; // 출처 탭 = 그룹 클러스터링 키 (누락 시 클러스터링 no-op)
         }
 
         /// <summary>
@@ -408,46 +338,31 @@ namespace YART.Data
             if (IsDummy) return false;
             if (IsProxy) return OriginalNode.CanBeQueuedRecursively(visited);
 
-            // 이미 완료된 연구는 큐에 추가할 필요 없음 (하지만 체인에서는 유효)
+            // 완료된 연구는 큐에 넣을 필요는 없지만 체인 상으로는 유효
             if (Def.IsFinished) return true;
 
-            // 선행 연구 외의 조건이 충족되지 않으면 큐에 추가 불가
             if (!CanResearchIgnoringPrerequisites()) return false;
 
             if (visited == null) visited = new HashSet<ResearchProjectDef>();
-            if (visited.Contains(Def)) return false;
-            visited.Add(Def);
+            if (!visited.Add(Def)) return false; // 사이클
 
-            // 모든 선행 연구가 완료되었거나 재귀적으로 큐에 추가 가능한지 확인
             var graph = ResearchGraph.Instance;
             if (graph == null || !graph.Initialized) return false;
 
-            if (Def.prerequisites != null)
+            return PrerequisitesQueueable(Def.prerequisites, visited, graph)
+                && PrerequisitesQueueable(Def.hiddenPrerequisites, visited, graph);
+        }
+
+        /// <summary>미완료 선행들이 모두 그래프에 있고 재귀적으로 큐잉 가능한가.</summary>
+        private static bool PrerequisitesQueueable(List<ResearchProjectDef> prereqDefs, HashSet<ResearchProjectDef> visited, ResearchGraph graph)
+        {
+            if (prereqDefs == null) return true;
+            foreach (var prereqDef in prereqDefs)
             {
-                foreach (var prereqDef in Def.prerequisites)
-                {
-                    if (prereqDef.IsFinished) continue;
-
-                    if (!graph.AllNodes.TryGetValue(prereqDef, out var prereqNode))
-                        return false;
-                    if (!prereqNode.CanBeQueuedRecursively(visited))
-                        return false;
-                }
+                if (prereqDef.IsFinished) continue;
+                if (!graph.AllNodes.TryGetValue(prereqDef, out var prereqNode)) return false;
+                if (!prereqNode.CanBeQueuedRecursively(visited)) return false;
             }
-
-            if (Def.hiddenPrerequisites != null)
-            {
-                foreach (var prereqDef in Def.hiddenPrerequisites)
-                {
-                    if (prereqDef.IsFinished) continue;
-
-                    if (!graph.AllNodes.TryGetValue(prereqDef, out var prereqNode))
-                        return false;
-                    if (!prereqNode.CanBeQueuedRecursively(visited))
-                        return false;
-                }
-            }
-
             return true;
         }
 
@@ -509,13 +424,7 @@ namespace YART.Data
             }
             if (Def.requiredResearchBuilding != null && !Def.PlayerHasAnyAppropriateResearchBench)
             {
-                // CanBeResearchedAt이 작업대 + 연결된 활성 시설(복합분석기 등)까지 검사하므로 둘 다 명시
-                string detail = Def.requiredResearchBuilding.LabelCap;
-                if (!Def.requiredResearchFacilities.NullOrEmpty())
-                {
-                    detail += " + " + string.Join(", ", Def.requiredResearchFacilities.Select(f => f.label));
-                }
-                outReasons.Add("MissingRequiredResearchFacilities".Translate() + " (" + detail + ")");
+                outReasons.Add("MissingRequiredResearchFacilities".Translate() + " (" + RequiredBenchDetail() + ")");
             }
             if (!MedievalOverhaulCompat.SchematicRequirementMet(Def))
             {
@@ -526,13 +435,29 @@ namespace YART.Data
             // 자체 조건은 충족 — 선행 체인 중 잠긴 연구 안내
             if (outReasons.Count == 0 && State == ResearchNodeState.Locked)
             {
-                foreach (var ancestor in Ancestors)
+                AddLockedAncestorReasons(outReasons);
+            }
+        }
+
+        /// <summary>CanBeResearchedAt이 작업대 + 연결된 활성 시설(복합분석기 등)까지 검사하므로 둘 다 명시</summary>
+        private string RequiredBenchDetail()
+        {
+            string detail = Def.requiredResearchBuilding.LabelCap;
+            if (!Def.requiredResearchFacilities.NullOrEmpty())
+            {
+                detail += " + " + string.Join(", ", Def.requiredResearchFacilities.Select(f => f.label));
+            }
+            return detail;
+        }
+
+        private void AddLockedAncestorReasons(List<string> outReasons)
+        {
+            foreach (var ancestor in Ancestors)
+            {
+                if (ancestor.IsDummy || ancestor.Def == null || ancestor.Def.IsFinished) continue;
+                if (!ancestor.CanResearchIgnoringPrerequisites())
                 {
-                    if (ancestor.IsDummy || ancestor.Def == null || ancestor.Def.IsFinished) continue;
-                    if (!ancestor.CanResearchIgnoringPrerequisites())
-                    {
-                        outReasons.Add($"Prerequisite locked: {ancestor.Label}");
-                    }
+                    outReasons.Add($"Prerequisite locked: {ancestor.Label}");
                 }
             }
         }
@@ -551,9 +476,7 @@ namespace YART.Data
             globalPortVersion++;
         }
 
-        /// <summary>
-        /// to로 나가는 엣지의 출발점
-        /// </summary>
+        /// <summary>to로 나가는 엣지의 출발점</summary>
         public Vector2 GetOutputAnchor(ResearchNode to)
         {
             if (IsDummy || to == null) return OutputAnchor;
@@ -563,9 +486,7 @@ namespace YART.Data
                 : OutputAnchor;
         }
 
-        /// <summary>
-        /// from에서 들어오는 엣지의 도착점
-        /// </summary>
+        /// <summary>from에서 들어오는 엣지의 도착점</summary>
         public Vector2 GetInputAnchor(ResearchNode from)
         {
             if (IsDummy || from == null) return InputAnchor;
@@ -575,9 +496,7 @@ namespace YART.Data
                 : InputAnchor;
         }
 
-        /// <summary>
-        /// to로 나가는 포트의 팬 내 정규화 순번 (0=최상단 ~ 1=최하단)
-        /// </summary>
+        /// <summary>to로 나가는 포트의 팬 내 정규화 순번 (0=최상단 ~ 1=최하단)</summary>
         public float GetOutputPortRatio(ResearchNode to)
         {
             if (IsDummy || to == null) return 0.5f;
@@ -585,9 +504,7 @@ namespace YART.Data
             return outputPorts.TryGetValue(to, out var port) ? port.ratio : 0.5f;
         }
 
-        /// <summary>
-        /// from에서 들어오는 포트의 팬 내 정규화 순번 (0=최상단 ~ 1=최하단)
-        /// </summary>
+        /// <summary>from에서 들어오는 포트의 팬 내 정규화 순번 (0=최상단 ~ 1=최하단)</summary>
         public float GetInputPortRatio(ResearchNode from)
         {
             if (IsDummy || from == null) return 0.5f;
@@ -653,18 +570,12 @@ namespace YART.Data
             var nextNodes = upstream ? node.Prerequisites : node.Children;
             foreach (var nextNode in nextNodes)
             {
-                // 1. Filter: Determine if the node should be collected (and potentially recursed)
                 if (filter != null && !filter(nextNode)) continue;
-
-                // 2. Collect: Add to the set
-                if (collected.Add(nextNode))
+                if (!collected.Add(nextNode)) continue;
+                // recurseCondition이 null이면 항상 계속 순회
+                if (recurseCondition == null || recurseCondition(nextNode))
                 {
-                    // 3. Recurse: Check if we should continue traversal from this node
-                    // If recurseCondition is null, default is to always recurse.
-                    if (recurseCondition == null || recurseCondition(nextNode))
-                    {
-                        CollectConnectedNodes(nextNode, collected, upstream, filter, recurseCondition);
-                    }
+                    CollectConnectedNodes(nextNode, collected, upstream, filter, recurseCondition);
                 }
             }
         }

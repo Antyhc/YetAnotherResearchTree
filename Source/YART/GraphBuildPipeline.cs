@@ -23,38 +23,48 @@ namespace YART
 
         static GraphBuildPipeline()
         {
+            ScheduleWarmedBackgroundBuild(() =>
+            {
+                var stopwatch = Stopwatch.StartNew();
+                BuildGraphAndLayout();
+                LogElapsed(stopwatch, "Research graph built in background");
+            }, "Background graph build failed");
+        }
+
+        private static void ScheduleWarmedBackgroundBuild(Action build, string failureMessage)
+        {
             LongEventHandler.ExecuteWhenFinished(() =>
             {
                 WarmUnlockedDefsCache();
-                // 큐에 넣은 지연 작업(VFE 등의 ExecuteWhenFinished)이 모두 끝난 뒤 백그라운드 빌드가 시작되도록, Task 시작을 한 단계 더 미룬다
                 LongEventHandler.ExecuteWhenFinished(() =>
                 {
                     graphBuildTask = Task.Run(() =>
                     {
-                        try
-                        {
-                            var stopwatch = Stopwatch.StartNew();
-                            BuildGraphAndLayout();
-                            stopwatch.Stop();
-                            if (Prefs.DevMode)
-                                Log.Message("[YART] Research graph built in background in " + stopwatch.ElapsedMilliseconds + " ms");
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error("[YART] Background graph build failed: " + ex);
-                        }
+                        try { build(); }
+                        catch (Exception ex) { Log.Error("[YART] " + failureMessage + ": " + ex); }
                     });
                 });
             });
         }
 
-        /// <summary>
-        /// VFE Tribals 등에서 ResearchProjectDef.UnlockedDefs의 getter에 패치를 생성했고, 그 작업 때문에 UnlockedDefs를 최초 접근하면
-        /// 텍스쳐 로그가 워크 스레드에서 일어나서 "Tried to get a resource from a different thread" 위반이 난다
-        /// 미리 메인 스레드에서 웜업해서 캐시를 생성해둬서 문제를 해결한다
-        /// </summary>
+        private static void RefreshGraphReady()
+        {
+            graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
+        }
+
+        private static void LogElapsed(Stopwatch stopwatch, string what, string suffix = "")
+        {
+            stopwatch.Stop();
+            if (Prefs.DevMode)
+                Log.Message($"[YART] {what} in {stopwatch.ElapsedMilliseconds} ms{suffix}");
+        }
+
+
         private static void WarmUnlockedDefsCache()
         {
+            // VFE Tribals 등이 ResearchProjectDef.UnlockedDefs getter를 패치해 두면 최초 접근 시 텍스처 로드가 일어나,
+            // 워커 스레드에서 접근하면 "Tried to get a resource from a different thread" 위반이 난다.
+            // 메인 스레드에서 미리 캐시를 채워 이를 회피한다.
             var defs = DefDatabase<ResearchProjectDef>.AllDefsListForReading;
             for (int i = 0; i < defs.Count; i++)
             {
@@ -116,7 +126,18 @@ namespace YART
                 SearchEngine.Build(ResearchGraph.Instance.AllNodes.Values);
             }
 
-            graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
+            RefreshGraphReady();
+        }
+
+        private static void RebuildEverything()
+        {
+            layoutCalculated = false;
+            SearchEngine.Invalidate();
+            ResearchGraph.Instance.Build();
+            RunLayoutAndSearch();
+            Rendering.EdgeRenderer.ClearCache();
+            Generation++;
+            RefreshGraphReady();
         }
 
         public static bool? AppliedGroupClusterByTab { get; private set; }
@@ -184,13 +205,13 @@ namespace YART
                     ResearchGraph.Instance.BuildPreset(preset);
                     Rendering.EdgeRenderer.ClearCache();
                     Generation++;
-                    graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
+                    RefreshGraphReady();
                     if (Prefs.DevMode)
                         Log.Message($"[YART] Preset rebuilt in background (generation {Generation}): {preset.Name}");
                 }
                 catch (Exception ex)
                 {
-                    graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
+                    RefreshGraphReady();
                     Log.Error("[YART] RebuildPresetNonBlocking failed: " + ex);
                 }
             });
@@ -202,7 +223,7 @@ namespace YART
         {
             try
             {
-                // 레이스 방지
+                // 진행 중인 백그라운드 빌드와의 레이스 방지
                 var task = graphBuildTask;
                 if (task != null && !task.IsCompleted)
                 {
@@ -210,24 +231,9 @@ namespace YART
                 }
 
                 var stopwatch = Stopwatch.StartNew();
-
-                // 그래프 전체를 새로 빌드
                 graphReady = false;
-                layoutCalculated = false;
-                SearchEngine.Invalidate();
-                ResearchGraph.Instance.Build();
-
-                RunLayoutAndSearch();
-
-                // 베지어 캐시 무효화
-                Rendering.EdgeRenderer.ClearCache();
-
-                graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
-                Generation++;
-
-                stopwatch.Stop();
-                if (Prefs.DevMode)
-                    Log.Message("[YART] RebuildNow completed in " + stopwatch.ElapsedMilliseconds + " ms (generation " + Generation + ")");
+                RebuildEverything();
+                LogElapsed(stopwatch, "RebuildNow completed", $" (generation {Generation})");
             }
             catch (Exception ex)
             {
@@ -245,33 +251,18 @@ namespace YART
         {
             graphReady = false;
             layoutCalculated = false;
-            SearchEngine.Invalidate(); // 언어 재감지
+            SearchEngine.Invalidate(); // 언어 재감지 — 메인 스레드에서 미리 초기화한다
 
-            LongEventHandler.ExecuteWhenFinished(() =>
+            ScheduleWarmedBackgroundBuild(() =>
             {
-                WarmUnlockedDefsCache();
-                LongEventHandler.ExecuteWhenFinished(() =>
-                {
-                    graphBuildTask = Task.Run(() =>
-                    {
-                        try
-                        {
-                            ResearchGraph.Instance.Build();
-                            RunLayoutAndSearch();
-                            Rendering.EdgeRenderer.ClearCache();
-                            Generation++;
-                            graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
-                            if (Prefs.DevMode)
-                                Log.Message("[YART] Rebuilt after play-data/language reload (generation " + Generation + ")");
-                        }
-                        catch (Exception ex)
-                        {
-                            graphReady = false;
-                            Log.Error("[YART] Reload rebuild failed: " + ex);
-                        }
-                    });
-                });
-            });
+                ResearchGraph.Instance.Build();
+                RunLayoutAndSearch();
+                Rendering.EdgeRenderer.ClearCache();
+                Generation++;
+                RefreshGraphReady();
+                if (Prefs.DevMode)
+                    Log.Message("[YART] Rebuilt after play-data/language reload (generation " + Generation + ")");
+            }, "Reload rebuild failed");
         }
 
         public static void RebuildNonBlocking()
@@ -286,16 +277,8 @@ namespace YART
                     if (prev != null && !prev.IsCompleted) prev.Wait(); // 이전 빌드 완료 대기 (백그라운드)
 
                     var stopwatch = Stopwatch.StartNew(); // 이전 빌드 대기는 제외, 순수 리빌드 비용만 측정
-                    layoutCalculated = false;
-                    SearchEngine.Invalidate();
-                    ResearchGraph.Instance.Build();
-                    RunLayoutAndSearch();
-                    Rendering.EdgeRenderer.ClearCache();
-                    Generation++;
-                    graphReady = ResearchGraph.Instance.Initialized && layoutCalculated && SearchEngine.IsBuilt;
-                    stopwatch.Stop();
-                    if (Prefs.DevMode)
-                        Log.Message("[YART] Non-blocking rebuild done in " + stopwatch.ElapsedMilliseconds + " ms (generation " + Generation + ")");
+                    RebuildEverything();
+                    LogElapsed(stopwatch, "Non-blocking rebuild done", $" (generation {Generation})");
                 }
                 catch (Exception ex)
                 {
@@ -412,38 +395,25 @@ namespace YART
 
                 Log.Message($"[YART] === SubGraph: {graphKey} ({subGraph.Nodes.Count} nodes, {subGraph.Edges.Count} edges) ===");
 
-                // 레이어별로 노드 정리
-                var layers = new Dictionary<int, List<ResearchNode>>();
-                foreach (var node in subGraph.Nodes)
+                foreach (var layer in subGraph.Nodes.GroupBy(n => n.Rank).OrderBy(g => g.Key))
                 {
-                    if (!layers.ContainsKey(node.Rank))
-                        layers[node.Rank] = new List<ResearchNode>();
-                    layers[node.Rank].Add(node);
-                }
+                    var ordered = layer.OrderBy(n => n.VOrder).ToList();
+                    Log.Message($"[YART] --- Rank {layer.Key} ({ordered.Count} nodes) ---");
 
-                foreach (var rank in layers.Keys.OrderBy(r => r))
-                {
-                    var layer = layers[rank].OrderBy(n => n.VOrder).ToList();
-                    Log.Message($"[YART] --- Rank {rank} ({layer.Count} nodes) ---");
-
-                    foreach (var node in layer)
+                    foreach (var node in ordered)
                     {
-                        string prereqs = string.Join(", ", node.Prerequisites.Select(p => p.IsDummy ? $"D({p.Rank},{p.VOrder})" : p.Id));
-                        string children = string.Join(", ", node.Children.Select(c => c.IsDummy ? $"D({c.Rank},{c.VOrder})" : c.Id));
-
-                        if (node.IsDummy)
-                        {
-                            Log.Message($"[YART]   DUMMY: Rank={node.Rank}, VOrder={node.VOrder}, Pos=({node.Position.x:F1},{node.Position.y:F1}) | In=[{prereqs}] Out=[{children}]");
-                        }
-                        else
-                        {
-                            Log.Message($"[YART]   {node.Id}: Rank={node.Rank}, VOrder={node.VOrder}, Pos=({node.Position.x:F1},{node.Position.y:F1}) | In=[{prereqs}] Out=[{children}]");
-                        }
+                        string prereqs = string.Join(", ", node.Prerequisites.Select(NodeRef));
+                        string children = string.Join(", ", node.Children.Select(NodeRef));
+                        string name = node.IsDummy ? "DUMMY" : node.Id;
+                        Log.Message($"[YART]   {name}: Rank={node.Rank}, VOrder={node.VOrder}, Pos=({node.Position.x:F1},{node.Position.y:F1}) | In=[{prereqs}] Out=[{children}]");
                     }
                 }
             }
 
             Log.Message("[YART] ========== END DUMP ==========");
         }
+
+        private static string NodeRef(ResearchNode node)
+            => node.IsDummy ? $"D({node.Rank},{node.VOrder})" : node.Id;
     }
 }

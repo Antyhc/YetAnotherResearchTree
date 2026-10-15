@@ -183,6 +183,19 @@ namespace YART
             }
         }
 
+        /// <summary>한 프레임의 HUD/패널 배치. 모두 inRect 기준으로 미리 계산해 둔다.</summary>
+        private struct FrameLayout
+        {
+            public Rect? QueueBar;       // null = 큐 매니저 없음 (큐 바 미표시)
+            public Rect TopControls;
+            public Rect? LeftPanel;      // null = 선택 노드 없음
+            public Rect Chips;
+            public Rect Favorites;
+            public Rect Zoom;
+            public Rect VanillaSwitch;
+            public Rect Settings;
+        }
+
         public override void DoWindowContents(Rect inRect)
         {
             using (Temporary.Anchor(TextAnchor.UpperLeft))
@@ -194,191 +207,194 @@ namespace YART
                     return;
                 }
 
-                if (GraphBuildPipeline.Generation != lastSeenGeneration)
-                {
-                    history.Clear();
-                    focusedNodes.Clear();
-                    hoveredNode = null;
-                    externalListNode = null;
-                    externalListCandidate = null;
-                    lastSeenGeneration = GraphBuildPipeline.Generation;
-                }
+                ResetStaleStateOnRebuild();
+                ApplyUnifiedViewOnce();
+                ApplyPendingPresetSwitch();
+                ApplyPendingOpenDef();
 
-                if (!unifiedViewApplied)
-                {
-                    if (YARTMod.Settings.unifiedBenchView
-                        && SelectedChannel.IsBench
-                        && GetVisibleStandardTabs().Count >= 2)
-                    {
-                        GraphBuildPipeline.EnsureBuilt();
-                        ResearchGraph.Instance.GetOrBuildUnifiedBench();
-                        if (ResearchGraph.Instance.GetSubGraph(GraphKey.UnifiedBench) != null)
-                        {
-                            SwitchGraph(GraphKey.UnifiedBench, playSound: false);
-                            unifiedViewApplied = true;
-                        }
-                    }
-                    else
-                    {
-                        unifiedViewApplied = true;
-                    }
-                }
+                HandleHistoryMouseButtons();
+                HandleGlobalKeys();
 
-                // 프리셋 생성/편집 후 비동기 빌드가 끝나면 그 프리셋 뷰로 자동 전환
-                if (pendingSwitchPresetId != null)
-                {
-                    var presetKey = GraphKey.ForPreset(pendingSwitchPresetId);
-                    if (ResearchGraph.Instance.GetSubGraph(presetKey) != null)
-                    {
-                        SwitchGraph(presetKey, playSound: false);
-                        pendingSwitchPresetId = null;
-                    }
-                    else if (TabPresetManager.ById(pendingSwitchPresetId) == null)
-                    {
-                        pendingSwitchPresetId = null; // 삭제됐거나 사라진 프리셋 — 포기
-                    }
-                }
+                canvasRect = inRect; // 전체 화면을 캔버스로 사용
+                var layout = ComputeFrameLayout(inRect);
+                eraLabelTopOffset = layout.QueueBar != null ? Constraints.QueueBarHeight : 52f;
+                RebuildInteractionExcludeRects(layout);
 
-                // 외부에서 특정 연구로 열어달라는 요청
-                if (pendingOpenDef != null)
-                {
-                    var node = GetNodeOnCurrentGraph(pendingOpenDef);
-                    if (node == null) ResearchGraph.Instance.AllNodes.TryGetValue(pendingOpenDef, out node);
-                    if (node != null) JumpToNode(node);
-                    pendingOpenDef = null;
-                }
+                DrawFrame(inRect, layout);
 
-                // 마우스 뒤로/앞으로 버튼
-                if (Event.current.type == EventType.MouseDown
-                    && (Event.current.button == 3 || Event.current.button == 4))
-                {
-                    if (Event.current.button == 3 && history.CanUndo)
-                    {
-                        history.Undo();
-                        leftPanelScrollPosition = Vector2.zero;
-                        NavigateToHistoryNode(history.Current);
-                        SoundDefOf.Click.PlayOneShotOnCamera();
-                    }
-                    else if (Event.current.button == 4 && history.CanRedo)
-                    {
-                        history.Redo();
-                        leftPanelScrollPosition = Vector2.zero;
-                        NavigateToHistoryNode(history.Current);
-                        SoundDefOf.Click.PlayOneShotOnCamera();
-                    }
-                    Event.current.Use();
-                }
-
-                // 키보드: Ctrl+F = 검색 포커스, Home = 전체 보기
-                if (Event.current.type == EventType.KeyDown)
-                {
-                    if (Event.current.control && Event.current.keyCode == KeyCode.F)
-                    {
-                        GUI.FocusControl("YARTSearchField");
-                        Event.current.Use();
-                    }
-                    else if (Event.current.keyCode == KeyCode.Home
-                             && GUI.GetNameOfFocusedControl() != "YARTSearchField")
-                    {
-                        ZoomToFit();
-                        SoundDefOf.Click.PlayOneShotOnCamera();
-                        Event.current.Use();
-                    }
-                }
-
-                // 전체 화면을 캔버스로 사용
-                canvasRect = inRect;
-
-                // 상단 큐 바
-                var queueMgr = ResearchQueueManager.Instance;
-                Rect? queueBarRect = null;
-                if (queueMgr != null)
-                {
-                    queueBarRect = new Rect(0f, 0f, inRect.width, Constraints.QueueBarHeight);
-                }
-
-                // 좌상단
-                Rect topControlsRect = ComputeTopLeftControlsRect();
-
-                // 시대 라벨
-                eraLabelTopOffset = queueBarRect != null ? Constraints.QueueBarHeight : 52f;
-
-                // 좌측 상세 패널 영역
-                var leftRightWidth = Mathf.Max(300f, inRect.width * 0.25f);
-                Rect? leftRect = null;
-                bool shouldDrawLeftPanel = history.HasCurrent;
-                if (shouldDrawLeftPanel)
-                {
-                    leftRect = new Rect(0f, Constraints.QueueBarHeight, leftRightWidth,
-                        inRect.height - Constraints.QueueBarHeight);
-                }
-
-                // 우하단 트랙 칩 영역
-                Rect chipsRect = ComputeTrackChipsRect(inRect);
-
-                // 우상단 즐겨찾기 퀵리스트 (상단탭 바로 아래)
-                Rect favoritesRect = ComputeFavoritesRect(inRect);
-                Rect zoomRect = new Rect((leftRect?.xMax ?? 0f) + 16f, inRect.yMax - 40f, 80f, 24f);
-                // 바닐라 연구창 전환 아이콘 버튼 (줌 라벨 오른쪽)
-                Rect vanillaSwitchRect = new Rect(zoomRect.xMax + 6f, zoomRect.y, 24f, 24f);
-                // 설정 아이콘 버튼 (전환 버튼 오른쪽)
-                Rect settingsButtonRect = new Rect(vanillaSwitchRect.xMax + 6f, zoomRect.y, 24f, 24f);
-
-                // 1. 메인 캔버스 그리기 (배경)
-                interactionExcludeRects.Clear();
-                interactionExcludeRects.Add(topControlsRect);
-                if (queueBarRect != null) interactionExcludeRects.Add(queueBarRect.Value);
-                // 검색 결과 드롭다운 (직전 프레임 위치 — IMGUI 특성상 1프레임 지연은 무해)
-                if (searchResultsRect.height > 0f) interactionExcludeRects.Add(searchResultsRect);
-                // 외부 후행 호버 팝업 (동일하게 직전 프레임 위치)
-                if (externalListRect.height > 0f) interactionExcludeRects.Add(externalListRect);
-                if (shouldDrawLeftPanel) interactionExcludeRects.Add(leftRect.Value);
-                if (chipsRect.height > 0f) interactionExcludeRects.Add(chipsRect);
-                if (favoritesRect.height > 0f) interactionExcludeRects.Add(favoritesRect);
-                interactionExcludeRects.Add(zoomRect);
-                interactionExcludeRects.Add(vanillaSwitchRect);
-                interactionExcludeRects.Add(settingsButtonRect);
-
-                DoGraphCanvas(canvasRect);
-
-                // 2. 상단 큐 바 그리기
-                if (queueBarRect != null)
-                {
-                    DoQueueBar(queueBarRect.Value, topControlsRect.width);
-                }
-                else
-                {
-                    queueBarHoveredDef = null;
-                }
-
-                HandleSearchDropdownScroll();
-
-                // 3. 좌측 패널 그리기
-                if (shouldDrawLeftPanel)
-                {
-                    DoLeftRect(leftRect.Value);
-                }
-
-                // 4. 플로팅 HUD
-                DoTopLeftControls();
-                DoTrackChipsColumn(chipsRect);
-                DoFavoritesList(favoritesRect);
-                DoZoomIndicator(zoomRect);
-                DoVanillaSwitchButton(vanillaSwitchRect);
-                DoSettingsButton(settingsButtonRect);
-
-                // 5. 외부 후행 호버 팝업
-                DrawExternalDependentsPopup();
-
-                // 6. 성능 측정 오버레이
-                DrawPerfOverlay(inRect);
-
+                // 보조 마우스 버튼은 게임 카메라로 새지 않게 여기서 소비 (창 입력 격리)
                 if ((Event.current.type == EventType.MouseDown || Event.current.type == EventType.MouseUp)
                     && Event.current.button >= 2)
                 {
                     Event.current.Use();
                 }
             }
+        }
+
+        /// <summary>인게임 Rebuild(Generation 변화) 후 무효가 된 노드 참조를 버린다.</summary>
+        private void ResetStaleStateOnRebuild()
+        {
+            if (GraphBuildPipeline.Generation == lastSeenGeneration) return;
+
+            history.Clear();
+            focusedNodes.Clear();
+            hoveredNode = null;
+            externalListNode = null;
+            externalListCandidate = null;
+            lastSeenGeneration = GraphBuildPipeline.Generation;
+        }
+
+        /// <summary>설정에 따른 통합 뷰 자동 전환 - 창을 연 뒤 한 번만 수행한다.</summary>
+        private void ApplyUnifiedViewOnce()
+        {
+            if (unifiedViewApplied) return;
+
+            bool wantUnified = YARTMod.Settings.unifiedBenchView
+                               && SelectedChannel.IsBench
+                               && GetVisibleStandardTabs().Count >= 2;
+            if (!wantUnified)
+            {
+                unifiedViewApplied = true;
+                return;
+            }
+
+            // 빌드가 실패하면 다음 프레임에 재시도 (플래그를 세우지 않음)
+            if (!EnsureUnifiedBenchGraph()) return;
+
+            SwitchGraph(GraphKey.UnifiedBench, playSound: false);
+            unifiedViewApplied = true;
+        }
+
+        /// <summary>프리셋 생성/편집 후 비동기 빌드가 끝나면 그 프리셋 뷰로 자동 전환.</summary>
+        private void ApplyPendingPresetSwitch()
+        {
+            if (pendingSwitchPresetId == null) return;
+
+            var presetKey = GraphKey.ForPreset(pendingSwitchPresetId);
+            if (ResearchGraph.Instance.GetSubGraph(presetKey) != null)
+            {
+                SwitchGraph(presetKey, playSound: false);
+                pendingSwitchPresetId = null;
+            }
+            else if (TabPresetManager.ById(pendingSwitchPresetId) == null)
+            {
+                pendingSwitchPresetId = null; // 삭제됐거나 사라진 프리셋 — 포기
+            }
+        }
+
+        /// <summary>외부(InfoCard 등)에서 요청한 연구로 점프.</summary>
+        private void ApplyPendingOpenDef()
+        {
+            if (pendingOpenDef == null) return;
+
+            var node = GetNodeOnCurrentGraph(pendingOpenDef);
+            if (node == null) ResearchGraph.Instance.AllNodes.TryGetValue(pendingOpenDef, out node);
+            if (node != null) JumpToNode(node);
+            pendingOpenDef = null;
+        }
+
+        /// <summary>마우스 뒤로(3)/앞으로(4) 버튼 = 선택 히스토리 이동. 두 버튼 모두 여기서 소비한다.</summary>
+        private void HandleHistoryMouseButtons()
+        {
+            if (Event.current.type != EventType.MouseDown) return;
+            int button = Event.current.button;
+            if (button != 3 && button != 4) return;
+
+            bool moved = false;
+            if (button == 3 && history.CanUndo) { history.Undo(); moved = true; }
+            else if (button == 4 && history.CanRedo) { history.Redo(); moved = true; }
+
+            if (moved)
+            {
+                leftPanelScrollPosition = Vector2.zero;
+                NavigateToHistoryNode(history.Current);
+                SoundDefOf.Click.PlayOneShotOnCamera();
+            }
+            Event.current.Use();
+        }
+
+        /// <summary>Ctrl+F = 검색창 포커스, Home = 전체 보기.</summary>
+        private void HandleGlobalKeys()
+        {
+            if (Event.current.type != EventType.KeyDown) return;
+
+            if (Event.current.control && Event.current.keyCode == KeyCode.F)
+            {
+                GUI.FocusControl(SearchFieldName);
+                Event.current.Use();
+            }
+            else if (Event.current.keyCode == KeyCode.Home && !SearchFieldFocused)
+            {
+                ZoomToFit();
+                SoundDefOf.Click.PlayOneShotOnCamera();
+                Event.current.Use();
+            }
+        }
+
+        private FrameLayout ComputeFrameLayout(Rect inRect)
+        {
+            var layout = new FrameLayout
+            {
+                QueueBar = ResearchQueueManager.Instance != null
+                    ? new Rect(0f, 0f, inRect.width, Constraints.QueueBarHeight)
+                    : (Rect?)null,
+                TopControls = ComputeTopLeftControlsRect(),
+                Chips = ComputeTrackChipsRect(inRect),
+                Favorites = ComputeFavoritesRect(inRect),
+            };
+
+            if (history.HasCurrent)
+            {
+                float width = Mathf.Max(300f, inRect.width * 0.25f);
+                layout.LeftPanel = new Rect(0f, Constraints.QueueBarHeight, width,
+                    inRect.height - Constraints.QueueBarHeight);
+            }
+
+            // 좌측 패널 오른쪽에 붙는 하단 줌 라벨 + 아이콘 버튼 두 개
+            layout.Zoom = new Rect((layout.LeftPanel?.xMax ?? 0f) + 16f, inRect.yMax - 40f, 80f, 24f);
+            layout.VanillaSwitch = new Rect(layout.Zoom.xMax + 6f, layout.Zoom.y, 24f, 24f);
+            layout.Settings = new Rect(layout.VanillaSwitch.xMax + 6f, layout.Zoom.y, 24f, 24f);
+            return layout;
+        }
+
+        /// <summary>캔버스 입력을 가로막는 UI 영역 목록을 이번 프레임용으로 다시 만든다.</summary>
+        private void RebuildInteractionExcludeRects(FrameLayout layout)
+        {
+            interactionExcludeRects.Clear();
+            interactionExcludeRects.Add(layout.TopControls);
+            if (layout.QueueBar != null) interactionExcludeRects.Add(layout.QueueBar.Value);
+            // 드롭다운/팝업은 직전 프레임 위치 — IMGUI 특성상 1프레임 지연은 무해
+            if (searchResultsRect.height > 0f) interactionExcludeRects.Add(searchResultsRect);
+            if (externalListRect.height > 0f) interactionExcludeRects.Add(externalListRect);
+            if (layout.LeftPanel != null) interactionExcludeRects.Add(layout.LeftPanel.Value);
+            if (layout.Chips.height > 0f) interactionExcludeRects.Add(layout.Chips);
+            if (layout.Favorites.height > 0f) interactionExcludeRects.Add(layout.Favorites);
+            interactionExcludeRects.Add(layout.Zoom);
+            interactionExcludeRects.Add(layout.VanillaSwitch);
+            interactionExcludeRects.Add(layout.Settings);
+        }
+
+        /// <summary>그리기 순서: 캔버스 → 큐 바 → 좌측 패널 → 플로팅 HUD → 팝업 → 오버레이.</summary>
+        private void DrawFrame(Rect inRect, FrameLayout layout)
+        {
+            DoGraphCanvas(canvasRect);
+
+            if (layout.QueueBar != null) DoQueueBar(layout.QueueBar.Value, layout.TopControls.width);
+            else queueBarHoveredDef = null;
+
+            HandleSearchDropdownScroll();
+
+            if (layout.LeftPanel != null) DoLeftRect(layout.LeftPanel.Value);
+
+            DoTopLeftControls();
+            DoTrackChipsColumn(layout.Chips);
+            DoFavoritesList(layout.Favorites);
+            DoZoomIndicator(layout.Zoom);
+            DoVanillaSwitchButton(layout.VanillaSwitch);
+            DoSettingsButton(layout.Settings);
+
+            DrawExternalDependentsPopup();
+            DrawPerfOverlay(inRect);
         }
 
         private void SaveCurrentView()

@@ -151,64 +151,75 @@ namespace YART.Data
             if (def == null || def.IsFinished) return;
 
             Dictionary<ResearchChannel, ResearchProjectDef> oldHeads = null;
-
-            if (!toFront)
-            {
-                foreach (var d in CollectMissingChain(def))
-                {
-                    var q = GetOrAddQueue(ChannelOf(d));
-                    if (!q.Contains(d)) q.Add(d);
-                }
-            }
-            else
-            {
-                // CollectMissingChain은 선행-우선(위상) 순서. 채널별로 묶어 앞에서부터 그 순서대로 삽입.
-                var byChannel = new Dictionary<ResearchChannel, List<ResearchProjectDef>>();
-                foreach (var d in CollectMissingChain(def))
-                {
-                    var ch = ChannelOf(d);
-                    if (!byChannel.TryGetValue(ch, out var list))
-                    {
-                        list = new List<ResearchProjectDef>();
-                        byChannel[ch] = list;
-                    }
-                    list.Add(d);
-                }
-
-                oldHeads = new Dictionary<ResearchChannel, ResearchProjectDef>();
-                foreach (var kvp in byChannel)
-                {
-                    var q = GetOrAddQueue(kvp.Key);
-                    oldHeads[kvp.Key] = q.Count > 0 ? q[0] : null;
-                    foreach (var d in kvp.Value) q.Remove(d);
-                    for (int i = 0; i < kvp.Value.Count; i++) q.Insert(i, kvp.Value[i]);
-                }
-            }
+            if (toFront) oldHeads = InsertChainAtFront(def);
+            else AppendChainAtBack(def);
 
             foreach (var channel in queues.Keys.ToList())
             {
                 EnsureTopologicalOrder(channel);
             }
 
-            if (oldHeads != null)
-            {
-                foreach (var kvp in oldHeads)
-                {
-                    var q = GetOrAddQueue(kvp.Key);
-                    var newHead = q.Count > 0 ? q[0] : null;
-                    if (newHead != null && newHead != kvp.Value
-                        && !Find.ResearchManager.IsCurrentProject(newHead)
-                        && newHead.CanStartNow)
-                    {
-                        TryBeginProject(newHead, playSound: false); // 사운드는 아래 PlayActionSound가 일괄 재생
-                    }
-                }
-            }
+            if (oldHeads != null) StartChangedHeads(oldHeads);
 
-            // 큐에 추가하면 연구 시작 사운드(바닐라 ResearchStart) 재생
-            // 실제로 머리가 시작될 때 BeginProject는 무음(playSound:false)으로 두어 이중 재생 방지.
+            // 큐 추가의 시작 사운드는 여기서 한 번만 재생 — 머리 시작(BeginProject)은 무음으로 두어 이중 재생 방지.
             TryStartAllHeads(playSound: false);
             MultiplayerCompat.PlayActionSound(SoundDefOf.ResearchStart);
+        }
+
+        private void AppendChainAtBack(ResearchProjectDef def)
+        {
+            foreach (var d in CollectMissingChain(def))
+            {
+                var q = GetOrAddQueue(ChannelOf(d));
+                if (!q.Contains(d)) q.Add(d);
+            }
+        }
+
+        /// <summary>
+        /// 체인을 채널별로 묶어 각 큐 앞쪽에 선행-우선 순서로 삽입. 반환값 = 삽입 전 채널별 머리.
+        /// </summary>
+        private Dictionary<ResearchChannel, ResearchProjectDef> InsertChainAtFront(ResearchProjectDef def)
+        {
+            var byChannel = new Dictionary<ResearchChannel, List<ResearchProjectDef>>();
+            foreach (var d in CollectMissingChain(def)) // 이미 위상 순서
+            {
+                var ch = ChannelOf(d);
+                if (!byChannel.TryGetValue(ch, out var list))
+                {
+                    list = new List<ResearchProjectDef>();
+                    byChannel[ch] = list;
+                }
+                list.Add(d);
+            }
+
+            var oldHeads = new Dictionary<ResearchChannel, ResearchProjectDef>();
+            foreach (var kvp in byChannel)
+            {
+                var q = GetOrAddQueue(kvp.Key);
+                oldHeads[kvp.Key] = HeadOf(q);
+                foreach (var d in kvp.Value) q.Remove(d);
+                for (int i = 0; i < kvp.Value.Count; i++) q.Insert(i, kvp.Value[i]);
+            }
+            return oldHeads;
+        }
+
+        /// <summary>머리가 바뀐 채널을 새 머리로 전환 (사운드는 호출부가 일괄 재생).</summary>
+        private void StartChangedHeads(Dictionary<ResearchChannel, ResearchProjectDef> oldHeads)
+        {
+            foreach (var kvp in oldHeads)
+            {
+                var newHead = HeadOf(GetOrAddQueue(kvp.Key));
+                if (ShouldSwitchHead(newHead, kvp.Value)) TryBeginProject(newHead, playSound: false);
+            }
+        }
+
+        private static ResearchProjectDef HeadOf(List<ResearchProjectDef> queue) => queue.Count > 0 ? queue[0] : null;
+
+        private static bool ShouldSwitchHead(ResearchProjectDef newHead, ResearchProjectDef oldHead)
+        {
+            return newHead != null && newHead != oldHead
+                && !Find.ResearchManager.IsCurrentProject(newHead)
+                && newHead.CanStartNow;
         }
 
         public void EnqueueWithChainExclusive(ResearchProjectDef def)
@@ -251,12 +262,7 @@ namespace YART.Data
             q.Clear();
 
             var current = GetCurrentProject(channel);
-            if (current != null && !current.IsFinished)
-            {
-                suppressSync = true;
-                try { Find.ResearchManager.StopProject(current); }
-                finally { suppressSync = false; }
-            }
+            if (current != null && !current.IsFinished) StopProjectSuppressed(current);
 
             ResearchNode.InvalidateAllStates();
         }
@@ -311,12 +317,7 @@ namespace YART.Data
                 foreach (var q in queues.Values) q.Remove(dep);
             }
 
-            if (wasCurrent)
-            {
-                suppressSync = true;
-                try { Find.ResearchManager.StopProject(def); }
-                finally { suppressSync = false; }
-            }
+            if (wasCurrent) StopProjectSuppressed(def);
 
             ResearchNode.InvalidateAllStates();
             TryStartAllHeads(playSound: false);
@@ -335,16 +336,14 @@ namespace YART.Data
         internal void DoReorder(ResearchChannel channel, ResearchProjectDef def, int targetIndex)
         {
             var q = GetOrAddQueue(channel);
-            var oldHead = q.Count > 0 ? q[0] : null;
+            var oldHead = HeadOf(q);
 
             if (!q.Remove(def)) return;
             q.Insert(Mathf.Clamp(targetIndex, 0, q.Count), def);
             EnsureTopologicalOrder(channel);
 
-            var newHead = q.Count > 0 ? q[0] : null;
-            if (newHead != null && newHead != oldHead
-                && !Find.ResearchManager.IsCurrentProject(newHead)
-                && newHead.CanStartNow)
+            var newHead = HeadOf(q);
+            if (ShouldSwitchHead(newHead, oldHead))
             {
                 // 채널을 새 머리로 전환 (SetCurrentProject가 기존 프로젝트를 대체)
                 TryBeginProject(newHead, playSound: true);
@@ -401,18 +400,8 @@ namespace YART.Data
 
             pendingConfirmation = proj;
 
-            var sb = new StringBuilder();
-            sb.Append("ResearchProjectHasDefsWithMissingMemes".Translate(proj.LabelCap)).Append(":");
-            sb.AppendLine();
-            foreach (var (buildable, memes) in missing)
-            {
-                sb.AppendLine();
-                sb.Append("  - ").Append(buildable.LabelCap.Colorize(ColoredText.NameColor))
-                  .Append(" (").Append(memes.ToCommaList()).Append(")");
-            }
-
             Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                sb.ToString(),
+                BuildMissingMemesMessage(proj, missing),
                 confirmedAct: delegate
                 {
                     pendingConfirmation = null;
@@ -424,6 +413,20 @@ namespace YART.Data
                     DoRemove(proj);
                 }));
             SoundDefOf.Tick_Low.PlayOneShotOnCamera();
+        }
+
+        private static string BuildMissingMemesMessage(ResearchProjectDef proj, List<(BuildableDef, List<string>)> missing)
+        {
+            var sb = new StringBuilder();
+            sb.Append("ResearchProjectHasDefsWithMissingMemes".Translate(proj.LabelCap)).Append(":");
+            sb.AppendLine();
+            foreach (var (buildable, memes) in missing)
+            {
+                sb.AppendLine();
+                sb.Append("  - ").Append(buildable.LabelCap.Colorize(ColoredText.NameColor))
+                  .Append(" (").Append(memes.ToCommaList()).Append(")");
+            }
+            return sb.ToString();
         }
 
         /// <summary>
@@ -474,6 +477,14 @@ namespace YART.Data
                 suppressSync = false;
             }
             ResearchNode.InvalidateAllStates();
+        }
+
+        /// <summary>바닐라 StopProject 경유 중단 — 자기 자신이 유발한 포스트픽스의 재진입을 막는다.</summary>
+        private void StopProjectSuppressed(ResearchProjectDef proj)
+        {
+            suppressSync = true;
+            try { Find.ResearchManager.StopProject(proj); }
+            finally { suppressSync = false; }
         }
 
         public void Notify_ProjectFinished(ResearchProjectDef proj)

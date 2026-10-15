@@ -10,14 +10,10 @@ namespace YART.Data
 {
     public class ResearchEdge
     {
-        /// <summary>
-        /// 시작 노드 (선행 연구)
-        /// </summary>
+        /// <summary>시작 노드 (선행 연구)</summary>
         public ResearchNode From { get; }
 
-        /// <summary>
-        /// 끝 노드 (후속 연구)
-        /// </summary>
+        /// <summary>끝 노드 (후속 연구)</summary>
         public ResearchNode To { get; }
 
         public ResearchEdge(ResearchNode from, ResearchNode to)
@@ -31,7 +27,6 @@ namespace YART.Data
     /// SugiyamaLayout.Calculate 가 수집하는 레이아웃 품질 지표.
     /// </summary>
     public class LayoutMetrics
-    // public record LayoutMetrics
     {
         /// <summary>ordering 종료 시점의 인접 레이어 원시 교차 수</summary>
         public int Crossings;
@@ -48,23 +43,16 @@ namespace YART.Data
         /// <summary>ShapeChains 비수렴 체인 수</summary>
         public int NonConvergedChains;
 
-        /// <summary>
-        /// 막힘으로 정당화되지 않는 더미 체인 방향 전환 수
-        /// </summary>
+        /// <summary>막힘으로 정당화되지 않는 더미 체인 방향 전환 수</summary>
         public int UnjustifiedBends;
 
         /// <summary>가장 높은 컬럼의 픽셀 범위 (max − min, 단위: px)</summary>
         public float MaxColumnHeight;
 
-        /// <summary>
-        /// 예산 초과 컬럼의 제곱합 비용
-        /// </summary>
+        /// <summary>예산 초과 컬럼의 제곱합 비용</summary>
         public float OverflowCost;
 
-        /// <summary>
-        /// 비고립 노드(isolatedNodesSet 제외)를 포함하는 서로 다른 랭크 수.
-        /// 레이아웃 가로 폭을 랭크 단위로 나타낸다.
-        /// </summary>
+        /// <summary>비고립 노드를 포함하는 서로 다른 랭크 수 (= 레이아웃 가로 폭)</summary>
         public int UsedRankCount;
 
         /// <summary>
@@ -88,24 +76,16 @@ namespace YART.Data
         /// <summary>이 서브 그래프의 바닐라 연구 탭 (벤치 채널 전용, 그 외 null)</summary>
         public ResearchTabDef Tab => Key.Tab;
 
-        /// <summary>
-        /// 이 구역에 속한 모든 노드 (프록시 포함)
-        /// </summary>
+        /// <summary>이 구역에 속한 모든 노드 (프록시 포함)</summary>
         public List<ResearchNode> Nodes { get; } = new List<ResearchNode>();
 
-        /// <summary>
-        /// 이 구역 내의 모든 엣지
-        /// </summary>
+        /// <summary>이 구역 내의 모든 엣지</summary>
         public List<ResearchEdge> Edges { get; } = new List<ResearchEdge>();
 
-        /// <summary>
-        /// 그래프의 전체 바운딩 박스 (렌더링 영역)
-        /// </summary>
+        /// <summary>그래프의 전체 바운딩 박스 (렌더링 영역)</summary>
         public Rect BoundingBox { get; private set; }
 
-        /// <summary>
-        /// 각 TechLevel이 시작되는 X 좌표 (구분선 그리기용)
-        /// </summary>
+        /// <summary>각 TechLevel이 시작되는 X 좌표 (구분선 그리기용)</summary>
         public Dictionary<TechLevel, float> TechLevelBoundaries { get; set; } = new Dictionary<TechLevel, float>();
 
         public LayoutMetrics Metrics { get; internal set; }
@@ -196,19 +176,10 @@ namespace YART.Data
                 if (Prefs.DevMode) Log.Message("[YART] Building Research Graph...");
                 Clear();
 
-                // 1. 모든 ResearchProjectDef에 대해 ResearchNode 생성
                 CreateNodes();
-
-                // 2. 노드 간 연결 및 서브 그래프 할당
                 BuildConnections();
-
-                // 2.5 사이클 제거 (레이아웃 엔진 무한루프/폭주 방지)
                 RemoveCycles();
-
-                // 3. 중복된 선행 연구 제거 (Transitive Reduction)
                 RemoveRedundantPrerequisites();
-
-                // 4. 좌측 패널용 선행/후행 목록 사전 계산
                 BuildPanelLists();
 
                 _initialized = true;
@@ -225,18 +196,20 @@ namespace YART.Data
         {
             foreach (var subGraph in SubGraphs.Values)
             {
-                // DFS를 위한 상태 추적
-                var visited = new HashSet<ResearchNode>();
-                var recursionStack = new HashSet<ResearchNode>();
+                RemoveCyclesForSubGraph(subGraph);
+            }
+        }
 
-                // 서브 그래프의 모든 노드에 대해 DFS 수행 (비연결 컴포넌트 고려)
-                var nodes = subGraph.Nodes.ToList();
-                foreach (var node in nodes)
+        /// <summary>서브그래프 전 노드에서 DFS (비연결 컴포넌트 포함) — 백엣지를 끊는다.</summary>
+        private static void RemoveCyclesForSubGraph(ResearchSubGraph subGraph)
+        {
+            var visited = new HashSet<ResearchNode>();
+            var recursionStack = new HashSet<ResearchNode>();
+            foreach (var node in subGraph.Nodes.ToList())
+            {
+                if (!visited.Contains(node))
                 {
-                    if (!visited.Contains(node))
-                    {
-                        DetectAndRemoveCycle(node, visited, recursionStack, subGraph);
-                    }
+                    DetectAndRemoveCycle(node, visited, recursionStack, subGraph);
                 }
             }
         }
@@ -246,31 +219,28 @@ namespace YART.Data
             visited.Add(node);
             recursionStack.Add(node);
 
-            // 자식 노드들을 순회
-            var children = node.Children.ToList();
-            foreach (var child in children)
+            foreach (var child in node.Children.ToList())
             {
                 if (!visited.Contains(child))
                 {
                     DetectAndRemoveCycle(child, visited, recursionStack, subGraph);
+                    continue;
                 }
-                else if (recursionStack.Contains(child))
-                {
-                    Log.Warning($"[YART] Cycle detected: {node.Label} -> {child.Label}. Breaking connection.");
+                if (!recursionStack.Contains(child)) continue;
 
-                    node.Children.Remove(child);
-                    child.Prerequisites.Remove(node);
-
-                    // 엣지 리스트에서도 제거
-                    var edge = subGraph.Edges.FirstOrDefault(e => e.From == node && e.To == child);
-                    if (edge != null)
-                    {
-                        subGraph.Edges.Remove(edge);
-                    }
-                }
+                Log.Warning($"[YART] Cycle detected: {node.Label} -> {child.Label}. Breaking connection.");
+                node.Children.Remove(child);
+                child.Prerequisites.Remove(node);
+                RemoveEdge(subGraph, node, child);
             }
 
             recursionStack.Remove(node);
+        }
+
+        private static void RemoveEdge(ResearchSubGraph subGraph, ResearchNode from, ResearchNode to)
+        {
+            var edge = subGraph.Edges.FirstOrDefault(e => e.From == from && e.To == to);
+            if (edge != null) subGraph.Edges.Remove(edge);
         }
 
         private void Clear()
@@ -327,28 +297,17 @@ namespace YART.Data
 
         private void ConnectNodes(ResearchNode from, ResearchNode to)
         {
-            // 같은 서브그래프(트랙+탭)인 경우
-            if (from.Key.Equals(to.Key))
-            {
-                if (to.Prerequisites.Contains(from)) return;
+            // 서브그래프(트랙+탭)가 다르면 대상 그래프에 프록시를 세워 연결 — 교차 트랙/교차 탭 동일 처리
+            var source = from.Key.Equals(to.Key) ? from : GetOrCreateProxy(from, to.Key);
+            ConnectWithinSubGraph(source, to, SubGraphs[to.Key]);
+        }
 
-                from.Children.Add(to);
-                to.Prerequisites.Add(from);
-
-                SubGraphs[from.Key].AddEdge(from, to);
-            }
-            // 다른 서브그래프인 경우 (프록시 생성 필요) — 교차 트랙뿐 아니라 교차 탭도 동일 처리
-            else
-            {
-                var proxy = GetOrCreateProxy(from, to.Key);
-
-                if (to.Prerequisites.Contains(proxy)) return;
-
-                proxy.Children.Add(to);
-                to.Prerequisites.Add(proxy);
-
-                SubGraphs[to.Key].AddEdge(proxy, to);
-            }
+        private static void ConnectWithinSubGraph(ResearchNode from, ResearchNode to, ResearchSubGraph subGraph)
+        {
+            if (to.Prerequisites.Contains(from)) return;
+            from.Children.Add(to);
+            to.Prerequisites.Add(from);
+            subGraph.AddEdge(from, to);
         }
 
         /// <summary>
@@ -364,25 +323,36 @@ namespace YART.Data
 
         private void BuildPanelLists()
         {
-            foreach (var node in AllNodes.Values)
-            {
-                node.PanelPrerequisites = new List<ResearchNode>();
-                node.PanelChildren = new List<ResearchNode>();
-            }
+            ResetPanelLists(AllNodes.Values);
+
             foreach (var node in AllNodes.Values)
             {
                 AddPanelPrereqs(node, node.Def.prerequisites);
                 AddPanelPrereqs(node, node.Def.hiddenPrerequisites);
             }
+
             foreach (var node in AllNodes.Values)
             {
-                node.PanelPrerequisites = node.PanelPrerequisites.OrderBy(n => n.TechLevel).ThenBy(n => n.Label).ToList();
-                node.PanelChildren = node.PanelChildren.OrderBy(n => n.TechLevel).ThenBy(n => n.Label).ToList();
-
+                SortPanelLists(node);
                 node.ExternalChildren = node.PanelChildren
                     .Where(c => !c.Key.Equals(node.Key) && HasSurvivingExternalEdge(node, c))
                     .ToList();
             }
+        }
+
+        private static void ResetPanelLists(IEnumerable<ResearchNode> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                node.PanelPrerequisites = new List<ResearchNode>();
+                node.PanelChildren = new List<ResearchNode>();
+            }
+        }
+
+        private static void SortPanelLists(ResearchNode node)
+        {
+            node.PanelPrerequisites = node.PanelPrerequisites.OrderBy(n => n.TechLevel).ThenBy(n => n.Label).ToList();
+            node.PanelChildren = node.PanelChildren.OrderBy(n => n.TechLevel).ThenBy(n => n.Label).ToList();
         }
 
         /// <summary>
@@ -404,9 +374,15 @@ namespace YART.Data
             foreach (var prereqDef in prereqDefs)
             {
                 if (!AllNodes.TryGetValue(prereqDef, out var prereqNode)) continue;
-                if (!node.PanelPrerequisites.Contains(prereqNode)) node.PanelPrerequisites.Add(prereqNode);
-                if (!prereqNode.PanelChildren.Contains(node)) prereqNode.PanelChildren.Add(node);
+                LinkPanelPair(node, prereqNode, linkChild: true);
             }
+        }
+
+        /// <summary>중복 없이 양방향 패널 링크. linkChild=false면 선행 쪽만 (외부 노드는 후행 목록을 오염시키면 안 됨).</summary>
+        private static void LinkPanelPair(ResearchNode node, ResearchNode prereqNode, bool linkChild)
+        {
+            if (!node.PanelPrerequisites.Contains(prereqNode)) node.PanelPrerequisites.Add(prereqNode);
+            if (linkChild && !prereqNode.PanelChildren.Contains(node)) prereqNode.PanelChildren.Add(node);
         }
 
         private HashSet<ResearchNode> GetAllAncestors(ResearchNode node, HashSet<ResearchNode> visited = null)
@@ -425,8 +401,7 @@ namespace YART.Data
 
         private ResearchNode GetOrCreateProxy(ResearchNode original, GraphKey targetKey)
         {
-            // 방어적으로 보장
-            GetOrAddSubGraph(targetKey);
+            GetOrAddSubGraph(targetKey); // 대상 서브그래프 + 프록시 캐시 존재 보장
 
             var cache = _proxyCache[targetKey];
             if (cache.TryGetValue(original.Def, out var existingProxy))
@@ -548,16 +523,7 @@ namespace YART.Data
                     ConnectMergedPrereqList(copy, copy.Def.hiddenPrerequisites, nodeByDef, key, subGraph);
             }
 
-            {
-                var visited = new HashSet<ResearchNode>();
-                var recursionStack = new HashSet<ResearchNode>();
-                foreach (var node in subGraph.Nodes.ToList())
-                {
-                    if (!visited.Contains(node))
-                        DetectAndRemoveCycle(node, visited, recursionStack, subGraph);
-                }
-            }
-
+            RemoveCyclesForSubGraph(subGraph);
             RemoveRedundantPrerequisitesForSubGraph(subGraph);
             BuildPanelListsForUnified(nodeByDef, subGraph);
 
@@ -578,22 +544,13 @@ namespace YART.Data
             {
                 if (nodeByDef.TryGetValue(prereqDef, out var prereqCopy))
                 {
-                    ConnectUnifiedNodes(prereqCopy, copy, subGraph);
+                    ConnectWithinSubGraph(prereqCopy, copy, subGraph);
                 }
                 else if (AllNodes.TryGetValue(prereqDef, out var canonicalNode))
                 {
-                    var proxy = GetOrCreateProxy(canonicalNode, key);
-                    ConnectUnifiedNodes(proxy, copy, subGraph);
+                    ConnectWithinSubGraph(GetOrCreateProxy(canonicalNode, key), copy, subGraph);
                 }
             }
-        }
-
-        private static void ConnectUnifiedNodes(ResearchNode from, ResearchNode to, ResearchSubGraph subGraph)
-        {
-            if (to.Prerequisites.Contains(from)) return;
-            from.Children.Add(to);
-            to.Prerequisites.Add(from);
-            subGraph.AddEdge(from, to);
         }
 
         /// <summary>
@@ -625,9 +582,7 @@ namespace YART.Data
                 {
                     node.Prerequisites.Remove(remove);
                     remove.Children.Remove(node);
-
-                    var edge = subGraph.Edges.FirstOrDefault(e => e.From == remove && e.To == node);
-                    if (edge != null) subGraph.Edges.Remove(edge);
+                    RemoveEdge(subGraph, remove, node);
                 }
             }
         }
@@ -636,11 +591,7 @@ namespace YART.Data
             Dictionary<ResearchProjectDef, ResearchNode> unifiedNodeByDef,
             ResearchSubGraph subGraph)
         {
-            foreach (var copy in unifiedNodeByDef.Values)
-            {
-                copy.PanelPrerequisites = new List<ResearchNode>();
-                copy.PanelChildren = new List<ResearchNode>();
-            }
+            ResetPanelLists(unifiedNodeByDef.Values);
 
             foreach (var copy in unifiedNodeByDef.Values)
             {
@@ -648,23 +599,21 @@ namespace YART.Data
                 AddPanelPrereqsForUnified(copy, copy.Def.hiddenPrerequisites, unifiedNodeByDef);
             }
 
-            // 정렬
             foreach (var copy in unifiedNodeByDef.Values)
             {
-                copy.PanelPrerequisites = copy.PanelPrerequisites.OrderBy(n => n.TechLevel).ThenBy(n => n.Label).ToList();
-                copy.PanelChildren = copy.PanelChildren.OrderBy(n => n.TechLevel).ThenBy(n => n.Label).ToList();
-
-                if (AllNodes.TryGetValue(copy.Def, out var canonical) && canonical.ExternalChildren != null)
-                {
-                    copy.ExternalChildren = canonical.ExternalChildren
-                        .Where(c => c.Channel != null && !c.Channel.IsBench)
-                        .ToList();
-                }
-                else
-                {
-                    copy.ExternalChildren = new List<ResearchNode>();
-                }
+                SortPanelLists(copy);
+                copy.ExternalChildren = ExternalChildrenForMergedCopy(copy);
             }
+        }
+
+        /// <summary>병합 그래프 안에는 벤치 탭이 모두 들어와 있으므로, 외부 배지는 비-벤치 채널만 남긴다.</summary>
+        private List<ResearchNode> ExternalChildrenForMergedCopy(ResearchNode copy)
+        {
+            if (!AllNodes.TryGetValue(copy.Def, out var canonical) || canonical.ExternalChildren == null)
+            {
+                return new List<ResearchNode>();
+            }
+            return canonical.ExternalChildren.Where(c => c.Channel != null && !c.Channel.IsBench).ToList();
         }
 
         private void AddPanelPrereqsForUnified(
@@ -675,16 +624,11 @@ namespace YART.Data
             if (prereqDefs == null) return;
             foreach (var prereqDef in prereqDefs)
             {
-                ResearchNode prereqNode;
-                bool isUnifiedCopy = unifiedNodeByDef.TryGetValue(prereqDef, out prereqNode);
-                if (!isUnifiedCopy)
-                {
-                    if (!AllNodes.TryGetValue(prereqDef, out prereqNode)) continue;
-                }
+                // 병합 복사본이 있으면 그것을, 없으면 정규 노드를 가리킨다 (후자는 후행 링크 없음)
+                bool isMergedCopy = unifiedNodeByDef.TryGetValue(prereqDef, out var prereqNode);
+                if (!isMergedCopy && !AllNodes.TryGetValue(prereqDef, out prereqNode)) continue;
 
-                if (!node.PanelPrerequisites.Contains(prereqNode)) node.PanelPrerequisites.Add(prereqNode);
-
-                if (isUnifiedCopy && !prereqNode.PanelChildren.Contains(node)) prereqNode.PanelChildren.Add(node);
+                LinkPanelPair(node, prereqNode, linkChild: isMergedCopy);
             }
         }
 

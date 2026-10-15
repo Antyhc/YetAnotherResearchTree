@@ -3,7 +3,7 @@
 **English** | [한국어](README.ko.md)
 
 [![Build YART](https://github.com/csh1668/YetAnotherResearchTree/actions/workflows/build.yml/badge.svg)](https://github.com/csh1668/YetAnotherResearchTree/actions/workflows/build.yml)
-[![RimWorld 1.6](https://img.shields.io/badge/RimWorld-1.6-brightgreen.svg)](https://rimworldgame.com/)
+[![RimWorld 1.6 | 1.7](https://img.shields.io/badge/RimWorld-1.6%20%7C%201.7-brightgreen.svg)](https://rimworldgame.com/)
 [![Steam Subscribers](https://img.shields.io/steam/subscriptions/3745434121?logo=steam&label=Workshop%20subscribers&color=1b2838)](https://steamcommunity.com/sharedfiles/filedetails/?id=3745434121)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -31,12 +31,25 @@ pipeline. It also provides fast, convenient search powered by a suffix array.
 
 ## Building
 
-Requires MSBuild (Visual Studio 2022 Build Tools) and the .NET Framework 4.7.2 target.
+The sources live in `Source/YART`; there are two projects:
 
-```powershell
-msbuild Source/YART/YART.csproj -t:Restore -p:Configuration=Release-1.6
-msbuild Source/YART/YART.csproj -t:Build   -p:Configuration=Release-1.6 -nologo
-```
+- **RimWorld 1.7** — `Source/YART/YART.csproj` (SDK-style, net10.0) -> `1.7/Assemblies/YART.dll`.
+  Requires the .NET 10 SDK, an installed RimWorld 1.7 (references `Assembly-CSharp.dll` / `UnityStubs.dll`
+  from the game folder) and the Harmony workshop mod.
+
+  ```powershell
+  dotnet build Source/YART/YART.csproj -c Release
+  ```
+
+- **RimWorld 1.6** — `Source/YART.Old/YART.Old.csproj` (net472) -> `1.6/Assemblies/YART.dll`.
+  Requires MSBuild (Visual Studio 2022 Build Tools) and the .NET Framework 4.7.2 target.
+
+  ```powershell
+  msbuild Source/YART.Old/YART.Old.csproj -t:Restore -p:Configuration=Release-1.6
+  msbuild Source/YART.Old/YART.Old.csproj -t:Build   -p:Configuration=Release-1.6 -nologo
+  ```
+
+`make build` / `make build-old` run the same commands.
 
 ## License
 

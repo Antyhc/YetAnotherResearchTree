@@ -166,10 +166,8 @@ namespace YART.Data
 
                 var mods = new HashSet<ModContentPack>();
                 AddDef(node.Def, isMain: true, mods);
-                // YART 소유 스냅샷(node.UnlockedDefs)을 읽는다. node.Def.UnlockedDefs(패치 가능한 vanilla
-                // getter)를 백그라운드에서 직접 읽으면 VFE Tribals 등이 그 안에서 designator 텍스처를 워커
-                // 스레드에서 로드해 위반이 난다. 캐시는 GraphBuildPipeline.WarmUnlockedDefsCache()가 메인
-                // 스레드에서 미리 채워두므로, 여기서의 접근은 안전한 cache-hit이다.
+                // 반드시 YART 스냅샷(node.UnlockedDefs)만 읽을 것 — 패치 가능한 vanilla getter를 워커
+                // 스레드에서 직접 읽으면 텍스처 로드 위반(VFE Tribals 등). 메인스레드 워밍 후라 cache-hit.
                 foreach (var unlocked in node.UnlockedDefs)
                 {
                     if (unlocked == null) continue;
@@ -197,7 +195,17 @@ namespace YART.Data
             }
 
             _text = sb.ToString();
+            BuildPositionLookups(spans, nodeEnds);
+            _suffix = new SuffixStructure(_text);
+            AllocateScratch();
 
+            _isBuilt = true;
+            if (Prefs.DevMode) Log.Message($"[YART] Search index built: {_nodes.Count} nodes, {_text.Length} chars.");
+        }
+
+        /// <summary>코퍼스 위치 → 노드 인덱스 / 필드 클래스 lookup 배열 구성.</summary>
+        private void BuildPositionLookups(List<(int start, int len, byte field)> spans, List<int> nodeEnds)
+        {
             _posNode = new ushort[_text.Length];
             _posField = new byte[_text.Length];
             for (int i = 0; i < _posField.Length; i++) _posField[i] = FieldNone;
@@ -212,9 +220,10 @@ namespace YART.Data
             {
                 for (int i = start; i < start + len; i++) _posField[i] = field;
             }
+        }
 
-            _suffix = new SuffixStructure(_text);
-
+        private void AllocateScratch()
+        {
             int nc = _nodes.Count;
             _candStamp = new int[nc];
             _tokenStamp = new int[nc];
@@ -224,9 +233,6 @@ namespace YART.Data
             _weakScore = new int[nc];
             _weakPos = new int[nc];
             _generation = 0;
-
-            _isBuilt = true;
-            if (Prefs.DevMode) Log.Message($"[YART] Search index built: {nc} nodes, {_text.Length} chars.");
         }
 
         /// <summary>점수 내림차순으로 정렬된 결과. 빈/미빌드 시 빈 리스트.</summary>
@@ -235,126 +241,14 @@ namespace YART.Data
             var results = new List<SearchResult>();
             if (!_isBuilt || string.IsNullOrWhiteSpace(query)) return results;
 
-            var parts = query.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var textTokens = new List<string>();
             var modTokens = new List<string>();
-            foreach (var part in parts)
-            {
-                if (part[0] == '@')
-                {
-                    if (part.Length > 1)
-                    {
-                        string m = SearchNormalizer.Normalize(part.Substring(1));
-                        if (!string.IsNullOrEmpty(m)) modTokens.Add(m);
-                    }
-                    // 단독 "@"는 무시 (자동완성 입력 중 상태)
-                }
-                else
-                {
-                    string norm = SearchNormalizer.Normalize(part); // 코퍼스와 동일 정규화
-                    if (string.IsNullOrEmpty(norm)) continue;
-                    // '|'는 코퍼스 필드 구분자 — 포함 토큰은 어떤 단일 필드와도 매치 불가 (교차 매치 방지)
-                    if (norm.IndexOf('|') >= 0) return results;
-                    textTokens.Add(norm);
-                }
-            }
+            if (!ParseQuery(query, textTokens, modTokens)) return results;
 
-            var candidates = new List<int>();
-            int gen = ++_generation;
+            var candidates = CollectCandidates(textTokens, modTokens);
+            if (candidates.Count == 0) return results;
 
-            if (textTokens.Count == 0)
-            {
-                if (modTokens.Count == 0) return results;
-                for (int v = 0; v < _nodes.Count; v++)
-                {
-                    candidates.Add(v);
-                    _accumScore[v] = 0;
-                    _weakPos[v] = -1;
-                }
-            }
-            else
-            {
-                for (int t = 0; t < textTokens.Count; t++)
-                {
-                    string token = textTokens[t];
-                    int tgen = ++_generation;
-
-                    int occCount = _suffix.FindOccurrences(token, out int occStart);
-                    for (int oi = 0; oi < occCount; oi++)
-                    {
-                        int pos = _suffix.PositionAt(occStart + oi);
-                        byte field = _posField[pos];
-                        if (field == FieldNone) continue;
-                        int v = _posNode[pos];
-                        if (t > 0 && _candStamp[v] != gen) continue; // 이전 토큰에서 탈락
-
-                        int score = FieldWeights[field] + MatchBonus(pos, token.Length);
-                        if (_tokenStamp[v] != tgen)
-                        {
-                            _tokenStamp[v] = tgen;
-                            _tokenBestScore[v] = score;
-                            _tokenBestPos[v] = pos;
-                            if (t == 0)
-                            {
-                                _candStamp[v] = gen;
-                                candidates.Add(v);
-                                _accumScore[v] = 0;
-                                _weakScore[v] = int.MaxValue;
-                                _weakPos[v] = -1;
-                            }
-                        }
-                        else if (score > _tokenBestScore[v])
-                        {
-                            _tokenBestScore[v] = score;
-                            _tokenBestPos[v] = pos;
-                        }
-                    }
-
-                    // 이번 토큰 AND 적용 + 누적/최약 토큰 갱신
-                    int w = 0;
-                    for (int i = 0; i < candidates.Count; i++)
-                    {
-                        int v = candidates[i];
-                        if (_tokenStamp[v] != tgen)
-                        {
-                            _candStamp[v] = 0; // 탈락 — 이후 토큰의 occurrence 스킵용
-                            continue;
-                        }
-                        _accumScore[v] += _tokenBestScore[v];
-                        if (_tokenBestScore[v] < _weakScore[v])
-                        {
-                            _weakScore[v] = _tokenBestScore[v];
-                            _weakPos[v] = _tokenBestPos[v];
-                        }
-                        candidates[w++] = v;
-                    }
-                    candidates.RemoveRange(w, candidates.Count - w);
-                    if (candidates.Count == 0) return results;
-                }
-            }
-
-            // @ 모드 필터 — SourceMod의 name/packageId에 모든 필터 contains (AND, 기존 의미 유지)
-            if (modTokens.Count > 0)
-            {
-                int w = 0;
-                for (int i = 0; i < candidates.Count; i++)
-                {
-                    int v = candidates[i];
-                    var mod = _nodes[v].SourceMod;
-                    bool keep = mod != null;
-                    if (keep)
-                    {
-                        string name = SearchNormalizer.Normalize(mod.Name);
-                        string id = SearchNormalizer.Normalize(mod.PackageId);
-                        foreach (var m in modTokens)
-                        {
-                            if (!name.Contains(m) && !id.Contains(m)) { keep = false; break; }
-                        }
-                    }
-                    if (keep) candidates[w++] = v;
-                }
-                candidates.RemoveRange(w, candidates.Count - w);
-            }
+            if (modTokens.Count > 0) ApplyModFilter(candidates, modTokens);
 
             foreach (int v in candidates)
             {
@@ -367,16 +261,144 @@ namespace YART.Data
                 results.Add(r);
             }
 
-            results.Sort((a, b) =>
-            {
-                if (a.Score != b.Score) return b.Score.CompareTo(a.Score);
-                if (a.Score == 0) return string.CompareOrdinal(a.Node.Label, b.Node.Label); // @ 전용 쿼리 — 알파벳순
-                int la = a.Node.Label != null ? a.Node.Label.Length : 0;
-                int lb = b.Node.Label != null ? b.Node.Label.Length : 0;
-                if (la != lb) return la.CompareTo(lb);
-                return string.CompareOrdinal(a.Node.Label, b.Node.Label);
-            });
+            results.Sort(CompareResults);
             return results;
+        }
+
+        /// <summary>쿼리를 텍스트 토큰과 @모드 토큰으로 분해. false = 매치 불가 쿼리(즉시 빈 결과).</summary>
+        private static bool ParseQuery(string query, List<string> textTokens, List<string> modTokens)
+        {
+            foreach (var part in query.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (part[0] == '@')
+                {
+                    if (part.Length == 1) continue; // 단독 "@"는 자동완성 입력 중 상태
+                    string mod = SearchNormalizer.Normalize(part.Substring(1));
+                    if (!string.IsNullOrEmpty(mod)) modTokens.Add(mod);
+                    continue;
+                }
+
+                string norm = SearchNormalizer.Normalize(part); // 코퍼스와 동일 정규화
+                if (string.IsNullOrEmpty(norm)) continue;
+                // '|'는 코퍼스 필드 구분자 — 포함 토큰은 어떤 단일 필드와도 매치 불가 (교차 매치 방지)
+                if (norm.IndexOf('|') >= 0) return false;
+                textTokens.Add(norm);
+            }
+            return true;
+        }
+
+        /// <summary>텍스트 토큰들을 AND로 교차시켜 후보 노드 인덱스를 모은다 (_accumScore/_weakPos도 채움).</summary>
+        private List<int> CollectCandidates(List<string> textTokens, List<string> modTokens)
+        {
+            var candidates = new List<int>();
+            int gen = ++_generation;
+
+            if (textTokens.Count == 0)
+            {
+                if (modTokens.Count == 0) return candidates;
+                // @ 전용 쿼리 — 전 노드를 무점수 후보로 두고 모드 필터에 맡긴다
+                for (int v = 0; v < _nodes.Count; v++)
+                {
+                    candidates.Add(v);
+                    _accumScore[v] = 0;
+                    _weakPos[v] = -1;
+                }
+                return candidates;
+            }
+
+            for (int t = 0; t < textTokens.Count; t++)
+            {
+                string token = textTokens[t];
+                int tgen = ++_generation;
+
+                int occCount = _suffix.FindOccurrences(token, out int occStart);
+                for (int oi = 0; oi < occCount; oi++)
+                {
+                    int pos = _suffix.PositionAt(occStart + oi);
+                    byte field = _posField[pos];
+                    if (field == FieldNone) continue;
+                    int v = _posNode[pos];
+                    if (t > 0 && _candStamp[v] != gen) continue; // 이전 토큰에서 탈락
+
+                    int score = FieldWeights[field] + MatchBonus(pos, token.Length);
+                    if (_tokenStamp[v] != tgen)
+                    {
+                        _tokenStamp[v] = tgen;
+                        _tokenBestScore[v] = score;
+                        _tokenBestPos[v] = pos;
+                        if (t == 0)
+                        {
+                            _candStamp[v] = gen;
+                            candidates.Add(v);
+                            _accumScore[v] = 0;
+                            _weakScore[v] = int.MaxValue;
+                            _weakPos[v] = -1;
+                        }
+                    }
+                    else if (score > _tokenBestScore[v])
+                    {
+                        _tokenBestScore[v] = score;
+                        _tokenBestPos[v] = pos;
+                    }
+                }
+
+                // 이번 토큰 AND 적용 + 누적/최약 토큰 갱신
+                int w = 0;
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    int v = candidates[i];
+                    if (_tokenStamp[v] != tgen)
+                    {
+                        _candStamp[v] = 0; // 탈락 — 이후 토큰의 occurrence 스킵용
+                        continue;
+                    }
+                    _accumScore[v] += _tokenBestScore[v];
+                    if (_tokenBestScore[v] < _weakScore[v])
+                    {
+                        _weakScore[v] = _tokenBestScore[v];
+                        _weakPos[v] = _tokenBestPos[v];
+                    }
+                    candidates[w++] = v;
+                }
+                candidates.RemoveRange(w, candidates.Count - w);
+                if (candidates.Count == 0) return candidates;
+            }
+
+            return candidates;
+        }
+
+        /// <summary>@ 모드 필터 — SourceMod의 name/packageId에 모든 필터가 contains (AND).</summary>
+        private void ApplyModFilter(List<int> candidates, List<string> modTokens)
+        {
+            int w = 0;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                int v = candidates[i];
+                if (MatchesAllModTokens(_nodes[v].SourceMod, modTokens)) candidates[w++] = v;
+            }
+            candidates.RemoveRange(w, candidates.Count - w);
+        }
+
+        private static bool MatchesAllModTokens(ModContentPack mod, List<string> modTokens)
+        {
+            if (mod == null) return false;
+            string name = SearchNormalizer.Normalize(mod.Name);
+            string id = SearchNormalizer.Normalize(mod.PackageId);
+            foreach (var m in modTokens)
+            {
+                if (!name.Contains(m) && !id.Contains(m)) return false;
+            }
+            return true;
+        }
+
+        private static int CompareResults(SearchResult a, SearchResult b)
+        {
+            if (a.Score != b.Score) return b.Score.CompareTo(a.Score);
+            if (a.Score == 0) return string.CompareOrdinal(a.Node.Label, b.Node.Label); // @ 전용 쿼리 — 알파벳순
+            int la = a.Node.Label != null ? a.Node.Label.Length : 0;
+            int lb = b.Node.Label != null ? b.Node.Label.Length : 0;
+            if (la != lb) return la.CompareTo(lb);
+            return string.CompareOrdinal(a.Node.Label, b.Node.Label);
         }
 
         private int MatchBonus(int pos, int len)

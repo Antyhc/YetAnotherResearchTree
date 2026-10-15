@@ -27,9 +27,10 @@ namespace YART
         private double perfGcPerSec;
         private int perfNodes, perfEdges, perfVisNodes, perfVisEdges;
 
-        // 렌더 구간별 계측: 0=엣지, 1=노드배경(GL), 2=펄스, 3=노드텍스트
-        private readonly double[] perfSecAccum = new double[4];
-        private readonly double[] perfSecMs = new double[4];
+        // 렌더 구간별 계측 (Canvas의 PerfSec 호출과 일치): 0=엣지 큐, 1=엣지 플러시, 2=배경 큐, 3=배경 플러시
+        private const int PerfSecCount = 4;
+        private readonly double[] perfSecAccum = new double[PerfSecCount];
+        private readonly double[] perfSecMs = new double[PerfSecCount];
         private readonly Stopwatch perfSecSw = new Stopwatch();
         private int perfSecCur = -1;
 
@@ -59,19 +60,18 @@ namespace YART
         {
             if (!perfOverlay) return;
             perfSw.Stop();
-            double ms = perfSw.Elapsed.TotalMilliseconds;
-            // Layout = 디스플레이 프레임의 첫 패스 → 직전 프레임 합계 확정 후 리셋
+            // Layout = 디스플레이 프레임의 첫 패스 → 직전 프레임 합계를 확정(EMA)하고 리셋
             if (Event.current.type == EventType.Layout)
             {
                 perfFrameMsAvg += (perfFrameAccum - perfFrameMsAvg) * 0.1;
                 perfFrameAccum = 0.0;
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < PerfSecCount; i++)
                 {
                     perfSecMs[i] += (perfSecAccum[i] - perfSecMs[i]) * 0.1;
                     perfSecAccum[i] = 0.0;
                 }
             }
-            perfFrameAccum += ms;
+            perfFrameAccum += perfSw.Elapsed.TotalMilliseconds;
 
             // 0.5초마다 비율/카운트 갱신
             float now = Time.realtimeSinceStartup;
@@ -94,13 +94,18 @@ namespace YART
             if (graph == null) { perfNodes = perfEdges = perfVisNodes = perfVisEdges = 0; return; }
             perfNodes = graph.Nodes.Count;
             perfEdges = graph.Edges.Count;
-            int vn = 0;
-            foreach (var n in graph.Nodes) if (visibleRect.Overlaps(n.Rect)) vn++;
-            perfVisNodes = vn;
-            int ve = 0;
-            foreach (var e in graph.Edges)
-                if (visibleRect.Overlaps(e.From.Rect) || visibleRect.Overlaps(e.To.Rect)) ve++;
-            perfVisEdges = ve;
+
+            perfVisNodes = 0;
+            foreach (var node in graph.Nodes)
+            {
+                if (visibleRect.Overlaps(node.Rect)) perfVisNodes++;
+            }
+
+            perfVisEdges = 0;
+            foreach (var edge in graph.Edges)
+            {
+                if (visibleRect.Overlaps(edge.From.Rect) || visibleRect.Overlaps(edge.To.Rect)) perfVisEdges++;
+            }
         }
 
         private void DrawPerfOverlay(Rect inRect)

@@ -27,19 +27,20 @@ jobs:
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
 
-    # 게임이 설치돼 있지 않은 러너에서는 csproj가 NuGet 폴백 참조(Krafs.Rimworld.Ref / Lib.Harmony /
-    # Microsoft.NETFramework.ReferenceAssemblies)로 빌드한다. MP API(0MultiplayerAPI.dll)는 repo의 Refs/에 벤더링됨.
+    # 게임이 설치돼 있지 않은 러너에서는 1.6용 net472 프로젝트(Source/YART.Old)가 NuGet 폴백 참조(Krafs.Rimworld.Ref /
+    # Lib.Harmony / Microsoft.NETFramework.ReferenceAssemblies)로 빌드한다. MP API(0MultiplayerAPI.dll)는 repo의 Refs/에 벤더링됨.
+    # 1.7용 SDK 프로젝트(Source/YART/YART.csproj)는 NuGet 레퍼런스 패키지가 없어 게임 설치본이 필요하므로 CI에서 빌드하지 않는다.
     - name: Restore NuGet packages
-      run: msbuild Source/YART/YART.csproj -t:Restore -p:Configuration=Release-1.6
+      run: msbuild Source/YART.Old/YART.Old.csproj -t:Restore -p:Configuration=Release-1.6
 
     - name: Build
-      run: msbuild Source/YART/YART.csproj -t:Build -p:Configuration=Release-1.6 -nologo
+      run: msbuild Source/YART.Old/YART.Old.csproj -t:Build -p:Configuration=Release-1.6 -nologo
 
     - name: Check build output
       run: |
-        if (Test-Path "Assemblies/YART.dll") {
+        if (Test-Path "1.6/Assemblies/YART.dll") {
           Write-Host "Build successful! YART.dll found."
-          Get-Item "Assemblies/YART.dll" | Select-Object Name, Length, LastWriteTime
+          Get-Item "1.6/Assemblies/YART.dll" | Select-Object Name, Length, LastWriteTime
         } else {
           Write-Host "Build failed! YART.dll not found."
           exit 1
@@ -49,7 +50,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: YART-Assembly
-        path: Assemblies/YART.dll
+        path: 1.6/Assemblies/YART.dll
         retention-days: 7
 
     # ---- main push에서만: 모드 전체를 zip으로 묶어 Release 배포 (비스팀 유저용) ----
@@ -60,8 +61,15 @@ jobs:
         $stage = "dist/YetAnotherResearchTree"
         New-Item -ItemType Directory -Force -Path $stage | Out-Null
         # 런타임 파일만 포함 (Source/Refs/.github 등 개발 파일 제외)
-        Copy-Item -Recurse -Force About, Assemblies, Languages, Textures $stage
-        Remove-Item -Force "$stage/Assemblies/.gitkeep" -ErrorAction SilentlyContinue
+        # 1.7/Assemblies는 CI에서 빌드되지 않으므로, 커밋된 DLL이 있을 때만 포함된다.
+        Copy-Item -Recurse -Force About, Defs, Languages, Textures $stage
+        foreach ($v in "1.6", "1.7") {
+          if (Test-Path "$v/Assemblies/*.dll") {
+            New-Item -ItemType Directory -Force -Path "$stage/$v" | Out-Null
+            Copy-Item -Recurse -Force "$v/Assemblies" "$stage/$v/"
+            Remove-Item -Force "$stage/$v/Assemblies/.gitkeep", "$stage/$v/Assemblies/*.pdb" -ErrorAction SilentlyContinue
+          }
+        }
         Compress-Archive -Path $stage -DestinationPath YetAnotherResearchTree.zip -Force
         Get-Item YetAnotherResearchTree.zip | Select-Object Name, Length
 

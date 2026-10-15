@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Verse;
+using YART.Data;
 using YART.Utils;
 
 namespace YART.Rendering
@@ -15,16 +16,9 @@ namespace YART.Rendering
         private static int cacheAccessCount = 0;
 
         /// <summary>
-        /// 두 점을 잇는 베지어 곡선을 그린다
+        /// 두 점을 잇는 그래디언트 베지어 곡선을 그린다.
+        /// crossover는 수직 이동이 일어나는 통로 내 위치 (0=출발 직후, 1=도착 직전, 0.5=대칭).
         /// </summary>
-        /// <param name="start">시작점 (화면 좌표)</param>
-        /// <param name="end">도착점 (화면 좌표)</param>
-        /// <param name="startColor">시작 색깔</param>
-        /// <param name="endColor">도착 색깔</param>
-        /// <param name="width">선 굵기</param>
-        /// <param name="zoom">현재 zoom</param>
-        /// <param name="alpha">투명도</param>
-        /// <param name="crossover">수직 이동이 일어나는 통로 내 위치 (0=출발 직후 ~ 1=도착 직전, 0.5=대칭)</param>
         public static void DrawGradientBezier(Vector2 start, Vector2 end, Color startColor, Color endColor, float width, float zoom, float alpha = 1f, float crossover = 0.5f)
         {
             float dist = Vector2.Distance(start, end);
@@ -33,40 +27,27 @@ namespace YART.Rendering
             startColor = GenColor.WithAlpha(startColor, startColor.a * alpha);
             endColor = GenColor.WithAlpha(endColor, endColor.a * alpha);
 
-            // LOD
-            if (zoom < 0.3f || dist < 30f)
+            if (IsStraightLod(dist, zoom))
             {
                 DrawStraightRibbon(start, end, startColor, endColor, width);
                 return;
             }
 
-            // Calculate segment count based on distance and zoom (adaptive LOD)
-            int segments = CalculateSegmentCount(dist, zoom);
-
             var (p1, p2) = ComputeControlPoints(start, end, zoom, crossover);
-
-            // Get or calculate bezier points
-            Vector2[] points = GetBezierPoints(start, p1, p2, end, segments);
-
+            Vector2[] points = GetBezierPoints(start, p1, p2, end, CalculateSegmentCount(dist, zoom));
             EmitRibbon(points, points.Length, startColor, endColor, width);
         }
 
+        // 초저줌이거나 아주 짧은 엣지는 곡선 대신 직선으로 (LOD)
+        private static bool IsStraightLod(float dist, float zoom) => zoom < 0.3f || dist < 30f;
+
         /// <summary>
-        /// 베지어 제어점 계산. crossover가 0.5면 좌우 대칭(0.45·xDist)이고,
-        /// 0에 가까울수록 출발 직후, 1에 가까울수록 도착 직전에 수직 이동을 한다.
-        /// 고팬아웃 노드의 엣지들이 통로 내 서로 다른 X에서 교차하도록 분산하는 데 사용 (staggered crossover).
+        /// 베지어 제어점 계산. 고팬아웃 노드의 엣지들이 통로 내 서로 다른 X에서 교차하도록
+        /// crossover로 핸들 길이를 분산한다 (staggered crossover).
         ///
-        /// X 단조성 보장:
-        ///   dx = end.x - start.x 방향으로 p1, p2를 배치하므로
-        ///   p1.x = start.x + startOffset * sign(dx),
-        ///   p2.x = end.x   - endOffset  * sign(dx).
-        ///   startOffset + endOffset ≤ 0.9·xDist (cap) 이 성립하면
-        ///   start.x ≤ p1.x ≤ p2.x ≤ end.x (역방향이면 부등호 반전).
-        ///   핸들 합이 cap를 초과하면 비례 축소해 cap 이하로 만든다 — 축소는 현재
-        ///   두 핸들의 비율을 보존한다 (짧은 엣지에서 minOffset이 한쪽을 들어올린
-        ///   뒤라면 원래 crossover 비율이 아니라 그 floor 적용 후 비율이 유지됨 —
-        ///   staggered 효과가 짧은 엣지에서 약해지지만 X 단조성이 우선).
-        ///   축소 후 minOffset 미달은 허용 (X 단조성이 최소 핸들보다 우선).
+        /// 불변식 — X 단조성(start.x ≤ p1.x ≤ p2.x ≤ end.x, 역방향이면 반전):
+        /// 두 핸들 합이 cap(=0.9·xDist)을 넘으면 제어 다각형이 역전되므로 비례 축소한다.
+        /// 축소 후 minOffset 미달은 허용 — X 단조성이 최소 핸들 길이보다 우선한다.
         /// </summary>
         private static (Vector2 p1, Vector2 p2) ComputeControlPoints(Vector2 start, Vector2 end, float zoom, float crossover)
         {
@@ -80,13 +61,11 @@ namespace YART.Rendering
             }
 
             float minOffset = 30f * zoom;
-            // 0.9·xDist: 핸들 합의 상한 (양쪽 합이 xDist를 넘으면 제어 다각형이 역전)
             float cap = 0.9f * xDist;
 
-            float startOffset = Mathf.Max(xDist * 0.9f * crossover, minOffset);
-            float endOffset   = Mathf.Max(xDist * 0.9f * (1f - crossover), minOffset);
+            float startOffset = Mathf.Max(cap * crossover, minOffset);
+            float endOffset   = Mathf.Max(cap * (1f - crossover), minOffset);
 
-            // 핸들 합이 cap를 초과하면 비례 축소 → X 단조성 보장
             float sum = startOffset + endOffset;
             if (sum > cap)
             {
@@ -165,11 +144,10 @@ namespace YART.Rendering
         public static Vector2[] GetCurvePoints(Vector2 start, Vector2 end, float zoom, float crossover)
         {
             float dist = Vector2.Distance(start, end);
-            if (zoom < 0.3f || dist < 30f) return null;
+            if (IsStraightLod(dist, zoom)) return null;
 
-            int segments = CalculateSegmentCount(dist, zoom);
             var (p1, p2) = ComputeControlPoints(start, end, zoom, crossover);
-            return GetBezierPoints(start, p1, p2, end, segments);
+            return GetBezierPoints(start, p1, p2, end, CalculateSegmentCount(dist, zoom));
         }
 
         private static Vector2[] tailBuffer = new Vector2[256];
@@ -185,30 +163,21 @@ namespace YART.Rendering
             int n = pts.Count;
             if (n < 2 || alpha <= 0.01f) return;
 
-            // 누적 호 길이
-            chainArcLengths.Clear();
-            chainArcLengths.Add(0f);
-            float total = 0f;
-            for (int i = 1; i < n; i++)
-            {
-                total += Vector2.Distance(pts[i - 1], pts[i]);
-                chainArcLengths.Add(total);
-            }
+            float total = FillArcLengths(pts);
             if (total < 8f) return;
 
             // 등속 주행 + 도착 딜레이. 월드 길이는 줌과 무관해 줌 변경 시 위상이 튀지 않는다.
             float worldLen = total / Mathf.Max(zoom, 0.01f);
-            float travelTime = worldLen / YART.Data.Constraints.PulseSpeed;
-            float cycleTime = travelTime + YART.Data.Constraints.PulseArriveDelay;
+            float travelTime = worldLen / Constraints.PulseSpeed;
+            float cycleTime = travelTime + Constraints.PulseArriveDelay;
             float tCycle = Time.realtimeSinceStartup % cycleTime;
             if (tCycle >= travelTime) return; // 도착 후 대기 구간
 
             float headArc = (tCycle / travelTime) * total;
-            float tailArc = Mathf.Max(0f, headArc - YART.Data.Constraints.PulseTailLength * total);
+            float tailArc = Mathf.Max(0f, headArc - Constraints.PulseTailLength * total);
 
-            // 꼬리 리본 (꼬리→머리로 갈수록 진하게)
-            // 고정 개수 샘플링이 아니라 폴리라인의 실제 정점들을 그대로 따라간다 —
-            // 균일 샘플링은 곡선 구간에서 정점 사이를 현(직선)으로 잇는 아티팩트를 만든다.
+            // 꼬리 리본 (꼬리→머리로 갈수록 진하게). 균일 샘플링은 곡선 구간을 현(직선)으로
+            // 잇는 아티팩트를 만들므로, 폴리라인의 실제 정점들을 그대로 따라간다.
             Color dim = new Color(color.r, color.g, color.b, 0f);
             Color headColor = color;
             headColor.a *= alpha;
@@ -223,8 +192,7 @@ namespace YART.Rendering
             }
             tailBuffer[m++] = PointAtArc(pts, chainArcLengths, headArc);
 
-            float tailWidth = Mathf.Max(YART.Data.Constraints.EdgeLineMinWidth,
-                YART.Data.Constraints.EdgeLineWidth * zoom) * 1.5f;
+            float tailWidth = Mathf.Max(Constraints.EdgeLineMinWidth, Constraints.EdgeLineWidth * zoom) * 1.5f;
             EmitRibbon(tailBuffer, m, dim, headColor, tailWidth);
 
             // 헤드: 글로우 스프라이트
@@ -234,6 +202,22 @@ namespace YART.Rendering
             Color glowColor = color;
             glowColor.a = 0.9f * alpha;
             GLTexturedQuadBatcher.QueueQuad(Assets.GlowRadial, glowRect, glowColor);
+        }
+
+        /// <summary>
+        /// chainArcLengths를 pts의 누적 호 길이로 채우고 전체 길이를 반환.
+        /// </summary>
+        private static float FillArcLengths(List<Vector2> pts)
+        {
+            chainArcLengths.Clear();
+            chainArcLengths.Add(0f);
+            float total = 0f;
+            for (int i = 1; i < pts.Count; i++)
+            {
+                total += Vector2.Distance(pts[i - 1], pts[i]);
+                chainArcLengths.Add(total);
+            }
+            return total;
         }
 
         /// <summary>
@@ -276,19 +260,17 @@ namespace YART.Rendering
                 return cached;
             }
 
-            // Calculate new points
             Vector2[] points = new Vector2[segments + 1];
             for (int i = 0; i <= segments; i++)
             {
-                float t = i / (float)segments;
-                points[i] = CalculateCubicBezierPoint(t, p0, p1, p2, p3);
+                points[i] = CubicBezierPoint(i / (float)segments, p0, p1, p2, p3);
             }
 
-            // Add to cache with cleanup if needed
+            // 100회 미스마다 캐시가 절반 이상 찼으면 통째로 비운다 (LRU 없이 단순 축출)
             cacheAccessCount++;
             if (cacheAccessCount > 100)
             {
-                CleanupCacheIfNeeded();
+                if (bezierCache.Count > MaxCacheSize / 2) bezierCache.Clear();
                 cacheAccessCount = 0;
             }
 
@@ -300,10 +282,7 @@ namespace YART.Rendering
             return points;
         }
 
-        /// <summary>
-        /// Calculates a point on a cubic bezier curve.
-        /// </summary>
-        private static Vector2 CalculateCubicBezierPoint(float t, Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3)
+        private static Vector2 CubicBezierPoint(float t, Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3)
         {
             float u = 1 - t;
             float tt = t * t;
@@ -311,21 +290,11 @@ namespace YART.Rendering
             float uuu = uu * u;
             float ttt = tt * t;
 
-            Vector2 p = uuu * p0;           // (1-t)^3 * P0
-            p += 3 * uu * t * p1;           // 3(1-t)^2 * t * P1
-            p += 3 * u * tt * p2;           // 3(1-t) * t^2 * P2
-            p += ttt * p3;                   // t^3 * P3
-
+            Vector2 p = uuu * p0;
+            p += 3 * uu * t * p1;
+            p += 3 * u * tt * p2;
+            p += ttt * p3;
             return p;
-        }
-
-        private static void CleanupCacheIfNeeded()
-        {
-            if (bezierCache.Count > MaxCacheSize / 2)
-            {
-                // Simple cleanup: clear all (could be improved with LRU)
-                bezierCache.Clear();
-            }
         }
 
         public static void ClearCache()

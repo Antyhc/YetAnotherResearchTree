@@ -5,6 +5,7 @@
     <packageId>seohyeon.yart</packageId>
     <supportedVersions>
         <li>1.6</li>
+        <li>1.7</li>
     </supportedVersions>
     <description>Yet Another Research Tree (YART) replaces the vanilla research tab with a custom, graph-based tech tree.
 

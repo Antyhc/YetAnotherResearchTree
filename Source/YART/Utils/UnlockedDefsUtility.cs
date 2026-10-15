@@ -125,32 +125,7 @@ namespace YART.Utils
         }
 
         private static float MeasureGroupHeader(float width, List<ResearchProjectDef> alsoNeeds)
-        {
-            const float lineH = 22f;
-            using (Temporary.Font(GameFont.Tiny))
-            {
-                float startX = 4f;
-                float maxX = width;
-                float curX = startX;
-                int lines = 1;
-
-                curX += Text.CalcSize((string)"UnlockedWith".Translate() + " ").x;
-
-                for (int i = 0; i < alsoNeeds.Count; i++)
-                {
-                    float tw = Text.CalcSize((string)alsoNeeds[i].LabelCap).x;
-                    if (curX + tw > maxX && curX > startX)
-                    {
-                        curX = startX;
-                        lines++;
-                    }
-                    curX += tw;
-                    if (i < alsoNeeds.Count - 1)
-                        curX += Text.CalcSize(", ").x;
-                }
-                return lines * lineH;
-            }
-        }
+            => LayoutGroupHeader(0f, 0f, width, alsoNeeds, draw: false, onResearchClick: null);
 
         private static float MeasureList(List<Def> defs)
         {
@@ -170,6 +145,14 @@ namespace YART.Utils
 
         private static float DrawGroupHeader(float x, float cy, float width,
             List<ResearchProjectDef> alsoNeeds, Action<ResearchProjectDef> onResearchClick)
+            => LayoutGroupHeader(x, cy, width, alsoNeeds, draw: true, onResearchClick);
+
+        /// <summary>
+        /// "UnlockedWith A, B, C" 헤더의 줄바꿈 배치. Measure/Draw가 같은 배치 규칙을 쓰도록 한 곳에 모았다.
+        /// draw=false면 Widgets 호출 없이 높이만 계산한다. 반환값은 헤더 아래쪽 y.
+        /// </summary>
+        private static float LayoutGroupHeader(float x, float cy, float width,
+            List<ResearchProjectDef> alsoNeeds, bool draw, Action<ResearchProjectDef> onResearchClick)
         {
             const float lineH = 22f;
             using (Temporary.Font(GameFont.Tiny))
@@ -180,15 +163,19 @@ namespace YART.Utils
                 float curX = startX;
                 float lineY = cy;
 
-                void DrawText(string s, Color col)
+                // 줄바꿈 없이 그대로 이어붙이는 장식 텍스트 (접두사·구분자)
+                void PlaceText(string s)
                 {
                     float w = Text.CalcSize(s).x;
-                    using (Temporary.Color(col))
-                        Widgets.Label(new Rect(curX, lineY, w, lineH), s);
+                    if (draw)
+                    {
+                        using (Temporary.Color(Constraints.MutedText))
+                            Widgets.Label(new Rect(curX, lineY, w, lineH), s);
+                    }
                     curX += w;
                 }
 
-                DrawText((string)"UnlockedWith".Translate() + " ", Constraints.MutedText);
+                PlaceText((string)"UnlockedWith".Translate() + " ");
 
                 for (int i = 0; i < alsoNeeds.Count; i++)
                 {
@@ -202,27 +189,28 @@ namespace YART.Utils
                         lineY += lineH;
                     }
 
-                    Rect tokenRect = new Rect(curX, lineY, tw, lineH);
-                    bool over = onResearchClick != null && Mouse.IsOver(tokenRect);
-                    if (over) Widgets.DrawHighlight(tokenRect);
-
-                    using (Temporary.Color(research.IsFinished ? ActiveColors.PrereqMet : ActiveColors.PrereqUnmet))
-                        Widgets.Label(tokenRect, text);
-
-                    if (onResearchClick != null)
-                    {
-                        if (Widgets.ButtonInvisible(tokenRect))
-                        {
-                            SoundDefOf.Click.PlayOneShotOnCamera();
-                            onResearchClick(research);
-                        }
-                    }
+                    if (draw) DrawResearchToken(new Rect(curX, lineY, tw, lineH), research, text, onResearchClick);
                     curX += tw;
 
                     if (i < alsoNeeds.Count - 1)
-                        DrawText(", ", Constraints.MutedText);
+                        PlaceText(", ");
                 }
                 return lineY + lineH;
+            }
+        }
+
+        private static void DrawResearchToken(Rect tokenRect, ResearchProjectDef research, string text,
+            Action<ResearchProjectDef> onResearchClick)
+        {
+            if (onResearchClick != null && Mouse.IsOver(tokenRect)) Widgets.DrawHighlight(tokenRect);
+
+            using (Temporary.Color(research.IsFinished ? ActiveColors.PrereqMet : ActiveColors.PrereqUnmet))
+                Widgets.Label(tokenRect, text);
+
+            if (onResearchClick != null && Widgets.ButtonInvisible(tokenRect))
+            {
+                SoundDefOf.Click.PlayOneShotOnCamera();
+                onResearchClick(research);
             }
         }
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -41,39 +42,28 @@ namespace YART
                 return;
             }
 
-            // 개발자 모드
+            // 우측 고정 요소(DEV 패널·비우기 버튼)를 그리면서 스크롤 영역을 그만큼 좁힌다
             Rect scrollRect = rect;
             scrollRect.xMin += leftInset;
             scrollRect.width -= storedChipReserved;
+
+            const float devWidth = 250f;
             bool hasDevPanel = Prefs.DevMode && queue.Count > 0;
             if (hasDevPanel)
             {
-                const float devWidth = 250f;
-                Rect devRect = new Rect(rect.xMax - storedChipReserved - devWidth, rect.y, devWidth, rect.height);
                 scrollRect.width -= devWidth;
-                DrawQueueDevControls(devRect, queue[0]);
+                DrawQueueDevControls(new Rect(rect.xMax - storedChipReserved - devWidth, rect.y, devWidth, rect.height),
+                    queue[0]);
             }
 
             // 큐 비우기 버튼 (SSR 활성화시 숨김 처리)
             if (!SemiRandomResearchCompat.Active)
             {
                 const float clearW = 60f;
-                float clearRight = rect.xMax - storedChipReserved - (hasDevPanel ? 250f : 0f);
+                float clearRight = rect.xMax - storedChipReserved - (hasDevPanel ? devWidth : 0f);
                 Rect clearRect = new Rect(clearRight - clearW - 8f, rect.y + 10f, clearW, rect.height - 24f);
                 scrollRect.width -= (clearW + 16f);
-                if (DrawPanelButton(clearRect, "YART_Clear".Translate(), new Color(0.7f, 0.35f, 0.3f), enabled: true))
-                {
-                    var channel = SelectedChannel;
-                    int n = queue.Count;
-                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                        "YART_ClearConfirm".Translate(n),
-                        () =>
-                        {
-                            queueMgr.ClearQueue(channel);
-                            SoundDefOf.Tick_Low.PlayOneShotOnCamera();
-                        }));
-                }
-                TooltipHandler.TipRegion(clearRect, "YART_ClearTooltip".Translate());
+                DrawQueueClearButton(clearRect, queueMgr, queue.Count);
             }
 
             float cardWidth = Constraints.QueueCardWidth;
@@ -104,26 +94,9 @@ namespace YART
                 x += cardWidth + gap;
             }
 
-            // 드래그 중인 카드는 마우스를 따라다님
             if (draggedQueueDef != null)
             {
-                int dragIndex = 0;
-                for (int i = 0; i < queue.Count; i++)
-                {
-                    if (queue[i] == draggedQueueDef) { dragIndex = i; break; }
-                }
-
-                Rect dragRect = new Rect(Event.current.mousePosition.x - cardWidth / 2f, 8f, cardWidth, rect.height - 26f);
-                DrawQueueCard(dragRect, draggedQueueDef, dragIndex, dragging: true);
-
-                if (Event.current.rawType == EventType.MouseUp && Event.current.button == 0)
-                {
-                    int target = Mathf.Clamp(Mathf.RoundToInt((Event.current.mousePosition.x - gap) / (cardWidth + gap)), 0, queue.Count);
-                    queueMgr.Reorder(SelectedChannel, draggedQueueDef, target);
-                    SoundDefOf.Tick_Low.PlayOneShotOnCamera();
-                    draggedQueueDef = null;
-                    queueCardMouseDownDef = null;
-                }
+                DrawDraggedQueueCard(rect, queueMgr, queue, cardWidth, gap);
             }
             else if (Event.current.rawType == EventType.MouseUp && Event.current.button == 0)
             {
@@ -131,6 +104,45 @@ namespace YART
             }
 
             Widgets.EndScrollView();
+        }
+
+        private void DrawQueueClearButton(Rect clearRect, ResearchQueueManager queueMgr, int queueCount)
+        {
+            if (DrawPanelButton(clearRect, "YART_Clear".Translate(), new Color(0.7f, 0.35f, 0.3f), enabled: true))
+            {
+                var channel = SelectedChannel;
+                Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    "YART_ClearConfirm".Translate(queueCount),
+                    () =>
+                    {
+                        queueMgr.ClearQueue(channel);
+                        SoundDefOf.Tick_Low.PlayOneShotOnCamera();
+                    }));
+            }
+            TooltipHandler.TipRegion(clearRect, "YART_ClearTooltip".Translate());
+        }
+
+        /// <summary>드래그 중인 카드를 마우스에 붙여 그리고, 놓는 순간 드롭 위치로 재정렬한다.</summary>
+        private void DrawDraggedQueueCard(Rect barRect, ResearchQueueManager queueMgr,
+            IReadOnlyList<ResearchProjectDef> queue, float cardWidth, float gap)
+        {
+            int dragIndex = 0;
+            for (int i = 0; i < queue.Count; i++)
+            {
+                if (queue[i] == draggedQueueDef) { dragIndex = i; break; }
+            }
+
+            Rect dragRect = new Rect(Event.current.mousePosition.x - cardWidth / 2f, 8f, cardWidth, barRect.height - 26f);
+            DrawQueueCard(dragRect, draggedQueueDef, dragIndex, dragging: true);
+
+            if (Event.current.rawType != EventType.MouseUp || Event.current.button != 0) return;
+
+            int target = Mathf.Clamp(
+                Mathf.RoundToInt((Event.current.mousePosition.x - gap) / (cardWidth + gap)), 0, queue.Count);
+            queueMgr.Reorder(SelectedChannel, draggedQueueDef, target);
+            SoundDefOf.Tick_Low.PlayOneShotOnCamera();
+            draggedQueueDef = null;
+            queueCardMouseDownDef = null;
         }
 
         /// <summary>
@@ -177,6 +189,11 @@ namespace YART
             return chipW + 16f;
         }
 
+        private static readonly (string label, float fraction)[] DevProgressSteps =
+        {
+            ("+25%", 0.25f), ("+50%", 0.5f), ("100%", 1f),
+        };
+
         private void DrawQueueDevControls(Rect rect, ResearchProjectDef head)
         {
             Rect panel = rect.ContractedBy(0f, 8f);
@@ -195,28 +212,20 @@ namespace YART
                 Widgets.Label(labelRect, "DEV");
             }
 
-            float btnGap = 4f;
+            const float btnGap = 4f;
             float btnWidth = (inner.width - labelRect.width - btnGap * 3) / 3f;
             float btnHeight = Mathf.Min(30f, inner.height);
             float btnY = inner.y + (inner.height - btnHeight) / 2f;
             float x = labelRect.xMax + btnGap;
             Color devBtnColor = new Color(0.85f, 0.5f, 0.3f);
 
-            if (DrawPanelButton(new Rect(x, btnY, btnWidth, btnHeight), "+25%", devBtnColor, enabled: true))
+            foreach (var step in DevProgressSteps)
             {
-                DevAddProgress(head, 0.25f);
-            }
-            x += btnWidth + btnGap;
-
-            if (DrawPanelButton(new Rect(x, btnY, btnWidth, btnHeight), "+50%", devBtnColor, enabled: true))
-            {
-                DevAddProgress(head, 0.5f);
-            }
-            x += btnWidth + btnGap;
-
-            if (DrawPanelButton(new Rect(x, btnY, btnWidth, btnHeight), "100%", devBtnColor, enabled: true))
-            {
-                DevAddProgress(head, 1f);
+                if (DrawPanelButton(new Rect(x, btnY, btnWidth, btnHeight), step.label, devBtnColor, enabled: true))
+                {
+                    DevAddProgress(head, step.fraction);
+                }
+                x += btnWidth + btnGap;
             }
 
             TooltipHandler.TipRegion(panel, $"Dev: add progress to queue head\n{head.LabelCap}");
@@ -281,8 +290,7 @@ namespace YART
             Widgets.DrawBoxSolid(rect, bg);
             GUIDrawingUtilities.DrawBorderLines(rect, isCurrent ? accent : GenColor.WithAlpha(accent, 0.55f), isCurrent ? 1.5f : 1f);
 
-            bool hovered = !dragging && Mouse.IsOver(rect);
-            if (hovered)
+            if (!dragging && Mouse.IsOver(rect))
             {
                 Widgets.DrawHighlight(rect);
                 queueBarHoveredDef = def;
@@ -314,39 +322,7 @@ namespace YART
             Rect labelRect = new Rect(rect.x + 24f, rect.y + 4f, rect.width - 44f, 24f);
             DrawMarqueeLabel(labelRect, def.LabelCap, Color.white);
 
-            if (node != null)
-            {
-                var unlocked = node.UnlockedDefs;
-                if (unlocked.Count > 0)
-                {
-                    const float isz = 18f, ig = 3f;
-                    float ix = rect.x + 24f, iy = rect.y + 34f;
-                    float rightLimit = rect.xMax - 6f;
-                    int maxFit = Mathf.Max(0, Mathf.FloorToInt((rightLimit - ix + ig) / (isz + ig)));
-                    int shownIcons;
-                    bool hasMore;
-                    if (unlocked.Count <= maxFit) { shownIcons = unlocked.Count; hasMore = false; }
-                    else { shownIcons = Mathf.Max(0, maxFit - 1); hasMore = true; }
-
-                    for (int u = 0; u < shownIcons; u++)
-                    {
-                        Rect ir = new Rect(ix + u * (isz + ig), iy, isz, isz);
-                        Widgets.DefIcon(ir, unlocked[u], null, 1f, null, drawPlaceholder: true);
-                        if (!dragging && Mouse.IsOver(ir)) TooltipHandler.TipRegion(ir, UnlockTipFor(unlocked[u]));
-                    }
-                    if (hasMore)
-                    {
-                        Rect moreRect = new Rect(ix + shownIcons * (isz + ig), iy, 24f, isz);
-                        using (Temporary.Font(GameFont.Tiny))
-                        using (Temporary.Anchor(TextAnchor.MiddleLeft))
-                        using (Temporary.Color(new Color(0.55f, 0.62f, 0.72f)))
-                        {
-                            Widgets.Label(moreRect, $"+{unlocked.Count - shownIcons}");
-                        }
-                        if (!dragging && Mouse.IsOver(moreRect)) TooltipHandler.TipRegion(moreRect, OverflowUnlockTip(unlocked, shownIcons));
-                    }
-                }
-            }
+            if (node != null) DrawQueueCardUnlockIcons(rect, node.UnlockedDefs, dragging);
 
             using (Temporary.Font(GameFont.Tiny))
             using (Temporary.Anchor(TextAnchor.MiddleRight))
@@ -367,36 +343,46 @@ namespace YART
 
             if (dragging) return;
 
-            // 제거 버튼 - (SSR 활성화 시 숨김)
+            // 제거 버튼 (SSR 활성화 시 숨김 — closeRect가 zero라 아래 클릭 판별에서도 자연히 제외)
             const float cs = 22f;
             Rect closeRect = SemiRandomResearchCompat.Active
                 ? Rect.zero
                 : new Rect(rect.xMax - cs - 3f, rect.y + 3f, cs, cs);
-            if (!SemiRandomResearchCompat.Active)
+            if (!SemiRandomResearchCompat.Active && DrawQueueCardCloseButton(closeRect))
             {
-                bool closeHover = Mouse.IsOver(closeRect);
-                Widgets.DrawBoxSolid(closeRect, closeHover
-                    ? new Color(0.92f, 0.24f, 0.24f, 0.97f)
-                    : new Color(0.62f, 0.16f, 0.16f, 0.9f));
-                GUIDrawingUtilities.DrawBorderLines(closeRect, new Color(0.97f, 0.5f, 0.5f, 0.95f), 1f);
-                GUIDrawingUtilities.DrawIcon(closeRect.ContractedBy(5f), TexButton.CloseXSmall, Color.white);
-                if (Widgets.ButtonInvisible(closeRect))
-                {
-                    queueMgr?.Remove(def);
-                    SoundDefOf.Tick_Low.PlayOneShotOnCamera();
-                    return;
-                }
+                queueMgr?.Remove(def);
+                SoundDefOf.Tick_Low.PlayOneShotOnCamera();
+                return;
             }
 
-            // 클릭(포커스) vs 드래그(재정렬) 판별
+            HandleQueueCardMouse(rect, closeRect, def);
+        }
+
+        /// <summary>큐 카드 우상단의 붉은 제거 버튼. 눌렸으면 true.</summary>
+        private static bool DrawQueueCardCloseButton(Rect closeRect)
+        {
+            Widgets.DrawBoxSolid(closeRect, Mouse.IsOver(closeRect)
+                ? new Color(0.92f, 0.24f, 0.24f, 0.97f)
+                : new Color(0.62f, 0.16f, 0.16f, 0.9f));
+            GUIDrawingUtilities.DrawBorderLines(closeRect, new Color(0.97f, 0.5f, 0.5f, 0.95f), 1f);
+            GUIDrawingUtilities.DrawIcon(closeRect.ContractedBy(5f), TexButton.CloseXSmall, Color.white);
+            return Widgets.ButtonInvisible(closeRect);
+        }
+
+        /// <summary>큐 카드 위 마우스: 임계값을 넘긴 이동은 드래그(재정렬), 아니면 클릭(노드 점프).</summary>
+        private void HandleQueueCardMouse(Rect rect, Rect closeRect, ResearchProjectDef def)
+        {
             var e = Event.current;
-            if (e.type == EventType.MouseDown && e.button == 0 && rect.Contains(e.mousePosition) && !closeRect.Contains(e.mousePosition))
+            if (e.button != 0) return;
+
+            if (e.type == EventType.MouseDown
+                && rect.Contains(e.mousePosition) && !closeRect.Contains(e.mousePosition))
             {
                 queueCardMouseDownDef = def;
                 queueCardMouseDownPos = e.mousePosition;
                 e.Use();
             }
-            else if (e.type == EventType.MouseDrag && e.button == 0 && queueCardMouseDownDef == def)
+            else if (e.type == EventType.MouseDrag && queueCardMouseDownDef == def)
             {
                 if ((e.mousePosition - queueCardMouseDownPos).sqrMagnitude >
                     Constraints.ClickDragThreshold * Constraints.ClickDragThreshold)
@@ -405,18 +391,44 @@ namespace YART
                 }
                 e.Use();
             }
-            else if (e.type == EventType.MouseUp && e.button == 0 && queueCardMouseDownDef == def)
+            else if (e.type == EventType.MouseUp && queueCardMouseDownDef == def)
             {
                 queueCardMouseDownDef = null;
                 var jumpNode = GetNodeOnCurrentGraph(def);
-                if (jumpNode == null)
-                    ResearchGraph.Instance.AllNodes.TryGetValue(def, out jumpNode);
-                if (jumpNode != null)
-                {
-                    JumpToNode(jumpNode);
-                }
+                if (jumpNode == null) ResearchGraph.Instance.AllNodes.TryGetValue(def, out jumpNode);
+                if (jumpNode != null) JumpToNode(jumpNode);
                 e.Use();
             }
+        }
+
+        /// <summary>큐 카드 하단의 해금물 아이콘 줄. 폭이 모자라면 마지막 칸을 "+n"으로 대체한다.</summary>
+        private static void DrawQueueCardUnlockIcons(Rect rect, List<Def> unlocked, bool dragging)
+        {
+            if (unlocked.Count == 0) return;
+
+            const float isz = 18f, ig = 3f;
+            float ix = rect.x + 24f, iy = rect.y + 34f;
+            int maxFit = Mathf.Max(0, Mathf.FloorToInt((rect.xMax - 6f - ix + ig) / (isz + ig)));
+            bool hasMore = unlocked.Count > maxFit;
+            int shownIcons = hasMore ? Mathf.Max(0, maxFit - 1) : unlocked.Count;
+
+            for (int u = 0; u < shownIcons; u++)
+            {
+                Rect iconRect = new Rect(ix + u * (isz + ig), iy, isz, isz);
+                Widgets.DefIcon(iconRect, unlocked[u], null, 1f, null, drawPlaceholder: true);
+                if (!dragging && Mouse.IsOver(iconRect)) TooltipHandler.TipRegion(iconRect, UnlockTipFor(unlocked[u]));
+            }
+
+            if (!hasMore) return;
+
+            Rect moreRect = new Rect(ix + shownIcons * (isz + ig), iy, 24f, isz);
+            using (Temporary.Font(GameFont.Tiny))
+            using (Temporary.Anchor(TextAnchor.MiddleLeft))
+            using (Temporary.Color(new Color(0.55f, 0.62f, 0.72f)))
+            {
+                Widgets.Label(moreRect, $"+{unlocked.Count - shownIcons}");
+            }
+            if (!dragging && Mouse.IsOver(moreRect)) TooltipHandler.TipRegion(moreRect, OverflowUnlockTip(unlocked, shownIcons));
         }
     }
 }

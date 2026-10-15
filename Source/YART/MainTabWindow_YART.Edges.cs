@@ -17,25 +17,15 @@ namespace YART
             Vector2 startWorld = from.GetOutputAnchor(to);
             Vector2 endWorld = to.GetInputAnchor(from);
 
-            // Culling Check
-            float minX = Mathf.Min(startWorld.x, endWorld.x);
-            float maxX = Mathf.Max(startWorld.x, endWorld.x);
-            float minY = Mathf.Min(startWorld.y, endWorld.y);
-            float maxY = Mathf.Max(startWorld.y, endWorld.y);
-            float margin = 150f;
-            Rect connectionRect = new Rect(minX - margin, minY - margin, (maxX - minX) + margin * 2, (maxY - minY) + margin * 2);
+            if (!visibleRect.Overlaps(SegmentCullRect(startWorld, endWorld))) return;
 
-            if (!visibleRect.Overlaps(connectionRect)) return;
-
-            // 화면 좌표 변환
             Vector2 startScreen = (startWorld * zoom) + offset;
             Vector2 endScreen = (endWorld * zoom) + offset;
 
-            // Get gradient colors based on node states
             Color startColor = GetEdgeColor(from);
             Color endColor = GetEdgeColor(to);
 
-            // 포커스/검색 모드
+            // 포커스/검색 모드: 강조는 색을 흰색으로, 비강조는 알파로 (알파는 렌더러가 곡선 전체에 적용)
             float alpha = 1f;
             int highlight = GetEdgeHighlightState(from, to);
             if (highlight > 0)
@@ -49,11 +39,20 @@ namespace YART
                 alpha = EdgeUnfocusAlpha();
             }
 
-            // Line width scales with zoom
             float width = Mathf.Max(Constraints.EdgeLineMinWidth, Constraints.EdgeLineWidth * zoom);
 
-            // Draw gradient bezier curve (펄스는 DrawActivePulses에서 체인 단위로 별도 렌더링)
+            // 펄스는 DrawActivePulses에서 체인 단위로 별도 렌더링
             EdgeRenderer.DrawGradientBezier(startScreen, endScreen, startColor, endColor, width, zoom, alpha, GetEdgeCrossover(from, to));
+        }
+
+        private static Rect SegmentCullRect(Vector2 startWorld, Vector2 endWorld)
+        {
+            const float margin = 150f;
+            float minX = Mathf.Min(startWorld.x, endWorld.x);
+            float maxX = Mathf.Max(startWorld.x, endWorld.x);
+            float minY = Mathf.Min(startWorld.y, endWorld.y);
+            float maxY = Mathf.Max(startWorld.y, endWorld.y);
+            return new Rect(minX - margin, minY - margin, (maxX - minX) + margin * 2, (maxY - minY) + margin * 2);
         }
 
         /// <summary>
@@ -75,13 +74,7 @@ namespace YART
         private static readonly List<ResearchNode> activeTargetsBuffer = new List<ResearchNode>(8);
 
         /// <summary>
-        /// 활성 경로(완료된 선행 → 연구 중)마다 단일 에너지 펄스를 그린다.
-        /// 더미 체인을 포함한 실제 노드 사이의 전체 경로를 하나의 폴리라인으로 이어,
-        /// 세그먼트별 펄스 난립과 구간별 속도 차이를 없앤다. 노드/더미 위에 그려지도록
-        /// 노드 배경 플러시 이후에 호출할 것.
-        /// 허브 버스: 한 머리 엣지의 트렁크가 여러 타깃을 거느릴 수 있고(멀티 트랙 동시
-        /// 연구로 둘 이상이 InProgress일 수 있음), 활성 타깃마다 분기 경로가 다르므로
-        /// (소스, 활성 타깃) 쌍 단위로 펄스를 그린다.
+        /// 활성 경로(완료된 선행 -> 연구 중)마다 단일 에너지 펄스를 그린다.
         /// </summary>
         private void DrawActivePulses(ResearchSubGraph graph, Vector2 offset, float zoom)
         {
@@ -96,46 +89,60 @@ namespace YART
 
                 foreach (var target in activeTargetsBuffer)
                 {
-                    // 포커스/검색 디밍 중에는 관련 (소스, 타깃) 쌍에만 펄스 — 같은 트렁크의
-                    // 다른 타깃 경로는 별개로 판정한다 (기존 세그먼트 펄스와 동일 정책).
-                    // 호버 디밍이 꺼져 있으면(기본) 펄스를 억제하지 않고 그대로 흐르게 둔다.
-                    if (hoveredNode != null && YARTMod.Settings.focusHighlightDimming)
-                    {
-                        if (!focusedNodes.Contains(edge.From) || !focusedNodes.Contains(target)) continue;
-                    }
-                    else if (hoveredNode == null && matchedDefs.Count > 0)
-                    {
-                        if (!matchedDefs.Contains(edge.From.Def) || !matchedDefs.Contains(target.Def)) continue;
-                    }
-
-                    // 타깃 전용 경로 폴리라인 구성 (스크린 좌표, 각 구간은 본선과 동일 곡선):
-                    // 분기점(더미)에서는 자식 중 타깃이 있으면 그쪽으로, 아니면 다음 트렁크 더미로
-                    chainPointsBuffer.Clear();
-                    var prevNode = edge.From;
-                    Vector2 prevOut = edge.From.GetOutputAnchor(edge.To);
-                    chainPointsBuffer.Add((prevOut * zoom) + offset);
-
-                    var cur = edge.To;
-                    while (cur != null)
-                    {
-                        Vector2 inAnchor = cur.GetInputAnchor(prevNode);
-                        AppendCurve(chainPointsBuffer, (prevOut * zoom) + offset, (inAnchor * zoom) + offset,
-                            zoom, GetEdgeCrossover(prevNode, cur));
-                        if (!cur.IsDummy) break;
-
-                        // 더미 내부 직선 통로
-                        chainPointsBuffer.Add((cur.OutputAnchor * zoom) + offset);
-                        prevNode = cur;
-                        prevOut = cur.OutputAnchor;
-                        cur = NextHopToward(cur, target);
-                    }
-                    if (cur == null) continue; // 방어: 타깃은 같은 트렁크에서 수집되므로 항상 도달함
+                    if (PulseSuppressed(edge.From, target)) continue;
+                    if (!BuildPulsePolyline(edge.From, edge.To, target, offset, zoom)) continue;
 
                     Color pulseColor = Color.Lerp(GetEdgeColor(target), Color.white, 0.55f);
                     pulseColor.a = 1f;
                     EdgeRenderer.DrawChainPulse(chainPointsBuffer, pulseColor, zoom);
                 }
             }
+        }
+
+        /// <summary>
+        /// 포커스/검색 디밍 중에는 관련 (소스, 타깃) 쌍에만 펄스 — 같은 트렁크의 다른 타깃 경로는
+        /// 별개로 판정한다. 호버 디밍이 꺼져 있으면(기본) 억제하지 않고 그대로 흐르게 둔다.
+        /// </summary>
+        private bool PulseSuppressed(ResearchNode source, ResearchNode target)
+        {
+            if (hoveredNode != null && YARTMod.Settings.focusHighlightDimming)
+            {
+                return !focusedNodes.Contains(source) || !focusedNodes.Contains(target);
+            }
+            if (hoveredNode == null && matchedDefs.Count > 0)
+            {
+                return !matchedDefs.Contains(source.Def) || !matchedDefs.Contains(target.Def);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 타깃 전용 경로 폴리라인을 chainPointsBuffer에 구성한다 (스크린 좌표, 각 구간은 본선과 동일 곡선).
+        /// 분기점(더미)에서는 자식 중 타깃이 있으면 그쪽으로, 아니면 다음 트렁크 더미로 진행.
+        /// 타깃에 도달하지 못하면(방어) false.
+        /// </summary>
+        private bool BuildPulsePolyline(ResearchNode source, ResearchNode firstHop, ResearchNode target, Vector2 offset, float zoom)
+        {
+            chainPointsBuffer.Clear();
+            var prevNode = source;
+            Vector2 prevOut = source.GetOutputAnchor(firstHop);
+            chainPointsBuffer.Add((prevOut * zoom) + offset);
+
+            var cur = firstHop;
+            while (cur != null)
+            {
+                Vector2 inAnchor = cur.GetInputAnchor(prevNode);
+                AppendCurve(chainPointsBuffer, (prevOut * zoom) + offset, (inAnchor * zoom) + offset,
+                    zoom, GetEdgeCrossover(prevNode, cur));
+                if (!cur.IsDummy) return true;
+
+                // 더미 내부 직선 통로
+                chainPointsBuffer.Add((cur.OutputAnchor * zoom) + offset);
+                prevNode = cur;
+                prevOut = cur.OutputAnchor;
+                cur = NextHopToward(cur, target);
+            }
+            return false; // 타깃은 같은 트렁크에서 수집되므로 정상적으로는 도달함
         }
 
         /// <summary>
@@ -234,13 +241,6 @@ namespace YART
         // AnyRealTarget용 캐시 델리게이트 (프레임당 할당 방지)
         private Predicate<ResearchNode> matchedDefsPred;
 
-        /// <summary>
-        /// 포커스/검색 모드에서 이 엣지(세그먼트)의 강조 상태.
-        /// 1 = 강조(흰색), -1 = 디밍, 0 = 모드 비활성.
-        /// 검색 매칭은 실제 노드에만 기록되므로, 더미 끝점은 실제 노드까지 따라가
-        /// 체인 중간 세그먼트도 양 끝과 동일하게 강조/디밍되도록 한다.
-        /// 공유 트렁크는 도달 타깃 중 하나만 매치해도 켜진다 — 그 타깃의 경로이므로 의도된 동작.
-        /// </summary>
         /// <summary>강조 엣지의 흰색 블렌드 계수(0=원래색,1=완전 흰색). 호버는 focusAmount로 부드럽게, 검색은 즉시.</summary>
         private float EdgeHighlightBlend() => hoveredNode != null ? focusAmount : 1f;
 
@@ -255,6 +255,11 @@ namespace YART
             return Constraints.UnfocusedEdgeOpacity; // 검색 디밍: 즉시
         }
 
+        /// <summary>
+        /// 포커스/검색 모드에서 이 엣지(세그먼트)의 강조 상태. 1 = 강조(흰색), -1 = 디밍, 0 = 모드 비활성.
+        /// 검색 매칭은 실제 노드에만 기록되므로 더미 끝점은 실노드까지 따라가, 체인 중간 세그먼트도
+        /// 양 끝과 동일하게 판정된다. 공유 트렁크는 도달 타깃 중 하나만 매치해도 켜진다(그 타깃의 경로).
+        /// </summary>
         private int GetEdgeHighlightState(ResearchNode from, ResearchNode to)
         {
             if (hoveredNode != null)

@@ -35,6 +35,25 @@ namespace YART
 
         private const float SearchRowHeight = 26f;
         private const int SearchMaxVisibleRows = 8;
+        private const string SearchFieldName = "YARTSearchField";
+
+        private static bool SearchFieldFocused => GUI.GetNameOfFocusedControl() == SearchFieldName;
+
+        /// <summary>검색어를 비우고 결과/드롭다운을 초기화한다 (x 버튼·ESC 공용).</summary>
+        private void ClearSearchQuery()
+        {
+            searchQuery = "";
+            searchEffective = "";
+            SyncSearchFieldEditor();
+            RunSearch();
+        }
+
+        /// <summary>결과 행 선택 → 해당 노드로 점프. 통합 뷰 중이면 통합 복사본을 우선한다.</summary>
+        private void JumpToSearchResult(int index)
+        {
+            var resultNode = searchResults[Mathf.Clamp(index, 0, searchResults.Count - 1)].Node;
+            JumpToNode(GetNodeOnCurrentGraph(resultNode.Def) ?? resultNode);
+        }
 
         /// <summary>검색창 아래 가상화 드롭다운 리스트. 보이는 행만 drawRow 호출. searchResultsRect 갱신.</summary>
         private void DrawDropdownList(Rect searchRect, int count, System.Action<Rect, int> drawRow)
@@ -99,11 +118,11 @@ namespace YART
             HandleSearchKeys(CurrentDropdownMode());
 
             Rect textRect = new Rect(searchRect.x + 28, searchRect.y + 2, searchRect.width - 50, 24);
-            GUI.SetNextControlName("YARTSearchField");
+            GUI.SetNextControlName(SearchFieldName);
             searchQuery = Widgets.TextField(textRect, searchQuery);
 
             // IME 조합 중인 글자(아직 커밋 안 됨)도 즉시 검색에 반영 — 한글 "펨" 등 조합형 입력 대응
-            string composing = GUI.GetNameOfFocusedControl() == "YARTSearchField" ? Input.compositionString : "";
+            string composing = SearchFieldFocused ? Input.compositionString : "";
             string effective = string.IsNullOrEmpty(composing) ? searchQuery : searchQuery + composing;
             if (effective != searchEffective)
             {
@@ -114,13 +133,7 @@ namespace YART
             if (!string.IsNullOrEmpty(searchQuery))
             {
                 Rect clearRect = new Rect(searchRect.xMax - 24, searchRect.y + 2, 24, 24);
-                if (Widgets.ButtonInvisible(clearRect))
-                {
-                    searchQuery = "";
-                    searchEffective = "";
-                    SyncSearchFieldEditor();
-                    RunSearch();
-                }
+                if (Widgets.ButtonInvisible(clearRect)) ClearSearchQuery();
                 using (Temporary.Font(GameFont.Small))
                 using (Temporary.Anchor(TextAnchor.MiddleCenter))
                 using (Temporary.Color(Color.gray))
@@ -128,7 +141,7 @@ namespace YART
                     Widgets.Label(clearRect, "x");
                 }
             }
-            else if (GUI.GetNameOfFocusedControl() != "YARTSearchField")
+            else if (!SearchFieldFocused)
             {
                 using (Temporary.Font(GameFont.Tiny))
                 using (Temporary.Anchor(TextAnchor.MiddleLeft))
@@ -197,9 +210,7 @@ namespace YART
             if (Widgets.ButtonInvisible(rowRect))
             {
                 searchSelIndex = i;
-                // 통합 뷰 중이면 통합 복사본 우선, 없으면 원래 노드(JumpToNode가 그래프 전환 처리)
-                var jumpNode = GetNodeOnCurrentGraph(resNode.Def) ?? resNode;
-                JumpToNode(jumpNode);
+                JumpToSearchResult(i);
             }
         }
 
@@ -225,8 +236,7 @@ namespace YART
 
         private SearchDropdownMode CurrentDropdownMode()
         {
-            bool focused = GUI.GetNameOfFocusedControl() == "YARTSearchField";
-            if (focused)
+            if (SearchFieldFocused)
             {
                 string atToken = CurrentAtToken();
                 if (atToken != null)
@@ -279,7 +289,7 @@ namespace YART
             string head = lastSpace < 0 ? "" : searchQuery.Substring(0, lastSpace + 1);
             searchQuery = head + "@" + packageId.ToLowerInvariant() + " ";
             searchEffective = searchQuery;
-            GUI.FocusControl("YARTSearchField"); // 자동완성 선택 후에도 계속 입력 가능하게 포커스 유지
+            GUI.FocusControl(SearchFieldName); // 자동완성 선택 후에도 계속 입력 가능하게 포커스 유지
             SyncSearchFieldEditor();
             RunSearch();
         }
@@ -344,13 +354,18 @@ namespace YART
         private void HandleSearchKeys(SearchDropdownMode mode)
         {
             if (Event.current.type != EventType.KeyDown) return;
-            if (GUI.GetNameOfFocusedControl() != "YARTSearchField") return;
+            if (!SearchFieldFocused) return;
 
-            var key = Event.current.keyCode;
-            int count = mode == SearchDropdownMode.Results ? searchResults.Count
-                      : mode == SearchDropdownMode.ModComplete ? modSuggestions.Count : 0;
+            int count;
+            switch (mode)
+            {
+                case SearchDropdownMode.Results: count = searchResults.Count; break;
+                case SearchDropdownMode.ModComplete: count = modSuggestions.Count; break;
+                default: return;
+            }
             if (count == 0) return;
 
+            var key = Event.current.keyCode;
             if (key == KeyCode.DownArrow || key == KeyCode.UpArrow)
             {
                 searchSelIndex = Mathf.Clamp(searchSelIndex + (key == KeyCode.DownArrow ? 1 : -1), 0, count - 1);
@@ -359,14 +374,8 @@ namespace YART
             }
             else if (key == KeyCode.Return || key == KeyCode.KeypadEnter)
             {
-                int sel = Mathf.Clamp(searchSelIndex, 0, count - 1);
-                if (mode == SearchDropdownMode.Results)
-                {
-                    var selNode = searchResults[sel].Node;
-                    var jumpNode = GetNodeOnCurrentGraph(selNode.Def) ?? selNode;
-                    JumpToNode(jumpNode);
-                }
-                else ApplyModCompletion(modSuggestions[sel].packageId);
+                if (mode == SearchDropdownMode.Results) JumpToSearchResult(searchSelIndex);
+                else ApplyModCompletion(modSuggestions[Mathf.Clamp(searchSelIndex, 0, count - 1)].packageId);
                 Event.current.Use();
             }
         }
@@ -382,7 +391,7 @@ namespace YART
 
         private void SyncSearchFieldEditor()
         {
-            if (GUI.GetNameOfFocusedControl() != "YARTSearchField") return;
+            if (!SearchFieldFocused) return;
             var editor = (TextEditor)GUIUtility.GetStateObject(typeof(TextEditor), GUIUtility.keyboardControl);
             editor.text = searchQuery;
             editor.MoveTextEnd();
@@ -390,45 +399,36 @@ namespace YART
 
         public override void OnCancelKeyPressed()
         {
-            if (GUI.GetNameOfFocusedControl() == "YARTSearchField")
+            // ESC 1회 = 검색어 지우기, 비어 있으면 2회째에 포커스 해제 (창 닫기는 그 다음)
+            if (!SearchFieldFocused)
             {
-                if (!string.IsNullOrEmpty(searchQuery))
-                {
-                    searchQuery = "";
-                    searchEffective = "";
-                    SyncSearchFieldEditor();
-                    RunSearch();
-                }
-                else
-                {
-                    GUI.FocusControl(null);
-                }
-                Event.current.Use();
+                base.OnCancelKeyPressed();
                 return;
             }
-            base.OnCancelKeyPressed();
+
+            if (!string.IsNullOrEmpty(searchQuery)) ClearSearchQuery();
+            else GUI.FocusControl(null);
+            Event.current.Use();
         }
 
         public override void OnAcceptKeyPressed()
         {
-            if (GUI.GetNameOfFocusedControl() == "YARTSearchField")
+            if (!SearchFieldFocused)
             {
-                var mode = CurrentDropdownMode();
-                if (mode == SearchDropdownMode.Results && searchResults.Count > 0)
-                {
-                    int sel = Mathf.Clamp(searchSelIndex, 0, searchResults.Count - 1);
-                    var selNode = searchResults[sel].Node;
-                    JumpToNode(GetNodeOnCurrentGraph(selNode.Def) ?? selNode);
-                }
-                else if (mode == SearchDropdownMode.ModComplete && modSuggestions.Count > 0)
-                {
-                    int sel = Mathf.Clamp(searchSelIndex, 0, modSuggestions.Count - 1);
-                    ApplyModCompletion(modSuggestions[sel].packageId);
-                }
-                Event.current.Use(); // 드롭다운이 없어도 검색창 포커스 중 Enter로 창이 닫히지 않게 소비
+                base.OnAcceptKeyPressed();
                 return;
             }
-            base.OnAcceptKeyPressed();
+
+            var mode = CurrentDropdownMode();
+            if (mode == SearchDropdownMode.Results && searchResults.Count > 0)
+            {
+                JumpToSearchResult(searchSelIndex);
+            }
+            else if (mode == SearchDropdownMode.ModComplete && modSuggestions.Count > 0)
+            {
+                ApplyModCompletion(modSuggestions[Mathf.Clamp(searchSelIndex, 0, modSuggestions.Count - 1)].packageId);
+            }
+            Event.current.Use(); // 드롭다운이 없어도 검색창 포커스 중 Enter로 창이 닫히지 않게 소비
         }
     }
 }

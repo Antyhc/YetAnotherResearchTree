@@ -9,11 +9,15 @@ using YART.Compat;
 
 namespace YART
 {
+    // 노드 렌더링: 배경(패널/테두리/글로우/진행바), 전경(라벨·아이콘·배지), 리치 카드, 외부 후행 팝업
     public partial class MainTabWindow_YART
     {
-        /// <summary>
-        /// 이 노드에 적용할 비포커스 디밍 배수
-        /// </summary>
+        private const int RichCardStripMax = 5;
+
+        /// <summary>프록시는 원본을 가리킨다 — 상태/해금/비용은 항상 실노드 기준으로 읽어야 한다.</summary>
+        private static ResearchNode RealNodeOf(ResearchNode node) => node.IsProxy ? node.OriginalNode : node;
+
+        /// <summary>이 노드에 적용할 비포커스 디밍 배수</summary>
         private float GetUnfocusMultiplier(ResearchNode node)
         {
             if (hoveredNode != null)
@@ -39,8 +43,6 @@ namespace YART
         {
             return Mathf.InverseLerp(Constraints.RichCardZoomStart, Constraints.RichCardZoomFull, zoom);
         }
-
-        private const int RichCardStripMax = 5;
 
         private static Rect RepIconRect(Rect nodeRectScreen, float zoom)
         {
@@ -77,75 +79,35 @@ namespace YART
             return sb.ToString();
         }
 
+        /// <summary>Tiny 폰트 한 줄 라벨 — 폰트/앵커/색을 그리는 동안만 바꾸고 복원한다.</summary>
+        private static void DrawTinyLabel(Rect rect, string text, Color color, TextAnchor anchor)
+        {
+            using (Temporary.Font(GameFont.Tiny))
+            using (Temporary.Anchor(anchor))
+            using (Temporary.Color(color))
+            {
+                Widgets.Label(rect, text);
+            }
+        }
+
         private void DrawNodeBackground(ResearchNode node, Vector2 offset, float zoom)
         {
-            // 더미 노드는 일반 노드처럼 그리지 않고, 엣지처럼 연결선만 그리기
+            if (!visibleRect.Overlaps(node.Rect)) return;
+
+            // 더미는 노드가 아니라 엣지의 중간 구간 — 일반 노드처럼 그리지 않고 연결 리본만 그린다
             if (node.IsDummy)
             {
-                // Culling Check
-                if (!visibleRect.Overlaps(node.Rect)) return;
-
-                Vector2 startWorld = node.InputAnchor;
-                Vector2 endWorld = node.OutputAnchor;
-
-                Vector2 startScreen = (startWorld * zoom) + offset;
-                Vector2 endScreen = (endWorld * zoom) + offset;
-
-                Color edgeColor = GetEdgeColor(node);
-
-                int highlight = GetEdgeHighlightState(node, node);
-                if (highlight > 0)
-                {
-                    edgeColor = Color.Lerp(edgeColor, Constraints.EdgeHighlight, EdgeHighlightBlend());
-                }
-                else if (highlight < 0)
-                {
-                    edgeColor = edgeColor.WithAlpha(edgeColor.a * EdgeUnfocusAlpha());
-                }
-
-                float dummyWidth = Mathf.Max(Constraints.EdgeLineMinWidth, Constraints.EdgeLineWidth * zoom);
-                EdgeRenderer.DrawStraightRibbon(startScreen, endScreen, edgeColor, edgeColor, dummyWidth);
+                DrawDummyConnector(node, offset, zoom);
                 return;
             }
 
-            // Culling
-            if (!visibleRect.Overlaps(node.Rect)) return;
+            if (zoom < 0.2f) return; // 저줌 LOD
 
             Rect nodeRectScreen = GetNodeScreenRect(node, offset, zoom);
-
-            // Low zoom optimization
-            if (zoom < 0.2f) return;
-
             var state = node.State;
             Color eraColor = node.EraAccentColor;
-            Color borderColor;
-            Color bgColor;
-            float nodeAlpha = 1f;
-            float borderAlpha = 1f;
-
-            Color glassBase = new Color(0.045f, 0.075f, 0.125f, 0.82f);
-
-            switch (state)
-            {
-                case ResearchNodeState.Completed:
-                    borderColor = eraColor;
-                    bgColor = new Color(eraColor.r, eraColor.g, eraColor.b, 0.14f);
-                    break;
-                case ResearchNodeState.InProgress:
-                    borderColor = eraColor;
-                    bgColor = glassBase;
-                    break;
-                case ResearchNodeState.Available:
-                    borderColor = eraColor;
-                    bgColor = glassBase;
-                    break;
-                default: // Locked — 시대 색을 유지하되 톤 다운 (무채색이라 안 보이던 문제 수정)
-                    borderColor = eraColor;
-                    borderAlpha = 0.45f;
-                    bgColor = Color.Lerp(glassBase, eraColor, 0.08f);
-                    nodeAlpha = 0.75f;
-                    break;
-            }
+            Color borderColor = eraColor;
+            ResolveNodeSurface(state, eraColor, out Color bgColor, out float nodeAlpha, out float borderAlpha);
 
             // 호버 디밍은 설정에 따라(기본 off) + focusAmount로 부드럽게, 검색 디밍은 즉시·항상.
             float unfocusMul = GetUnfocusMultiplier(node);
@@ -156,7 +118,6 @@ namespace YART
             }
 
             float corner = Constraints.NodeCornerRadius * Mathf.Max(0.7f, zoom);
-
             bool isHovered = !IsMouseOverBlockingElement() && nodeRectScreen.Contains(Event.current.mousePosition);
 
             if (isHovered)
@@ -167,23 +128,18 @@ namespace YART
                     new TipSignal(() => BuildNodeTooltip(tipNode, tipShowTab), tipNode.Def.GetHashCode()));
             }
 
-            // 연결 노드 양성 강조(선행/후행) — 디밍 OFF에서도 보이도록. 글로우/테두리에 반영.
+            // 연결 노드 양성 강조(선행/후행) — 디밍 OFF에서도 보이도록 글로우/테두리에 반영.
             float focusHL = FocusHighlightAmount(node);
-            // 잠긴 노드는 평소 톤다운(nodeAlpha 0.75)이라 반투명 패널로 글로우가 비쳐 배경색이
-            // 과하게 변한다(연구 가능 노드는 패널이 더 불투명해 덜 비침). 강조 시엔 불투명도를
-            // 연구 가능 노드 수준으로 끌어올려 글로우 번짐과 강조 강도를 일치시킨다.
+            // 잠긴 노드는 평소 톤다운(0.75)이라 반투명 패널로 글로우가 비쳐 배경색이 과하게 변한다.
+            // 강조 시엔 불투명도를 연구 가능 노드 수준으로 올려 글로우 번짐과 강조 강도를 맞춘다.
             if (focusHL > 0f && state == ResearchNodeState.Locked)
             {
                 nodeAlpha = Mathf.Lerp(nodeAlpha, 1f, focusHL);
                 borderAlpha = Mathf.Lerp(borderAlpha, 1f, focusHL);
             }
 
-            float glowIntensity = 0f;
-            if (isHovered) glowIntensity = 0.45f;
-            else if (state == ResearchNodeState.InProgress) glowIntensity = 0.55f;
-            else if (state == ResearchNodeState.Completed) glowIntensity = 0.22f;
-            if (focusHL > 0f) glowIntensity = Mathf.Max(glowIntensity, Constraints.FocusNodeGlow * focusHL);
-
+            // 1. 글로우
+            float glowIntensity = NodeGlowIntensity(state, isHovered, focusHL);
             if (glowIntensity > 0f)
             {
                 float expand = 10f * Mathf.Max(0.7f, zoom);
@@ -203,8 +159,8 @@ namespace YART
             Color finalBorderColor = borderColor.WithAlpha(borderColor.a * borderAlpha);
             if (focusHL > 0f)
             {
-                // 엣지가 흰색으로 강조되는 것과 같은 시각 언어 — 테두리를 흰색 쪽으로 끌고 알파를 채운다.
-                // (잠긴 후행 노드의 옅은 테두리도 이때 또렷해져 경로가 끝까지 보인다.)
+                // 엣지 강조와 같은 시각 언어 — 흰색 쪽으로 끌고 알파를 채워, 잠긴 후행 노드의
+                // 옅은 테두리도 또렷해지게 한다(경로가 끝까지 보임).
                 Color whitened = Color.Lerp(borderColor, Constraints.EdgeHighlight, Constraints.FocusNodeBorderWhiten * focusHL);
                 finalBorderColor = whitened.WithAlpha(Mathf.Max(finalBorderColor.a, focusHL));
             }
@@ -218,22 +174,79 @@ namespace YART
                     finalBorderColor, corner, Assets.PanelCornerUV);
             }
 
-            // 4. Progress Bar — 부분이라도 진행된 연구는 연구 중이 아니어도 항상 표시
+            // 4. 진행바 — 부분이라도 진행됐으면 연구 중이 아니어도 항상 표시
             if (state != ResearchNodeState.Completed && node.Progress > 0f)
             {
-                float barHeight = 4f * zoom;
-                float yPos = nodeRectScreen.yMax - barHeight - (3f * zoom);
-                float barWidth = nodeRectScreen.width - (10f * zoom);
-                float xPos = nodeRectScreen.x + (5f * zoom);
-
-                // Track
-                Rect trackRect = new Rect(xPos, yPos, barWidth, barHeight);
-                GLSolidQuadBatcher.QueueQuad(trackRect, new Color(0f, 0f, 0f, 0.5f * nodeAlpha));
-
-                // Fill
-                Rect fillRect = new Rect(xPos, yPos, barWidth * Mathf.Clamp01(node.Progress), barHeight);
-                GLSolidQuadBatcher.QueueQuad(fillRect, eraColor.WithAlpha(eraColor.a * nodeAlpha));
+                DrawNodeProgressBar(node, nodeRectScreen, zoom, nodeAlpha, eraColor);
             }
+        }
+
+        /// <summary>상태별 패널 채움색과 알파. 테두리는 항상 시대 색이되 Locked만 톤 다운(무채색이라 안 보이던 문제 수정).</summary>
+        private static void ResolveNodeSurface(ResearchNodeState state, Color eraColor,
+            out Color bgColor, out float nodeAlpha, out float borderAlpha)
+        {
+            Color glassBase = new Color(0.045f, 0.075f, 0.125f, 0.82f);
+            nodeAlpha = 1f;
+            borderAlpha = 1f;
+
+            switch (state)
+            {
+                case ResearchNodeState.Completed:
+                    bgColor = new Color(eraColor.r, eraColor.g, eraColor.b, 0.14f);
+                    break;
+                case ResearchNodeState.InProgress:
+                case ResearchNodeState.Available:
+                    bgColor = glassBase;
+                    break;
+                default: // Locked
+                    bgColor = Color.Lerp(glassBase, eraColor, 0.08f);
+                    borderAlpha = 0.45f;
+                    nodeAlpha = 0.75f;
+                    break;
+            }
+        }
+
+        private static float NodeGlowIntensity(ResearchNodeState state, bool isHovered, float focusHL)
+        {
+            float glow = 0f;
+            if (isHovered) glow = 0.45f;
+            else if (state == ResearchNodeState.InProgress) glow = 0.55f;
+            else if (state == ResearchNodeState.Completed) glow = 0.22f;
+            if (focusHL > 0f) glow = Mathf.Max(glow, Constraints.FocusNodeGlow * focusHL);
+            return glow;
+        }
+
+        private static void DrawNodeProgressBar(ResearchNode node, Rect nodeRectScreen, float zoom, float nodeAlpha, Color eraColor)
+        {
+            float barHeight = 4f * zoom;
+            float yPos = nodeRectScreen.yMax - barHeight - (3f * zoom);
+            float barWidth = nodeRectScreen.width - (10f * zoom);
+            float xPos = nodeRectScreen.x + (5f * zoom);
+
+            GLSolidQuadBatcher.QueueQuad(new Rect(xPos, yPos, barWidth, barHeight), new Color(0f, 0f, 0f, 0.5f * nodeAlpha));
+            GLSolidQuadBatcher.QueueQuad(new Rect(xPos, yPos, barWidth * Mathf.Clamp01(node.Progress), barHeight),
+                eraColor.WithAlpha(eraColor.a * nodeAlpha));
+        }
+
+        /// <summary>더미 노드 구간: 입력→출력 앵커를 잇는 직선 리본 (엣지 본선과 같은 색/강조 규칙).</summary>
+        private void DrawDummyConnector(ResearchNode node, Vector2 offset, float zoom)
+        {
+            Vector2 startScreen = (node.InputAnchor * zoom) + offset;
+            Vector2 endScreen = (node.OutputAnchor * zoom) + offset;
+
+            Color edgeColor = GetEdgeColor(node);
+            int highlight = GetEdgeHighlightState(node, node);
+            if (highlight > 0)
+            {
+                edgeColor = Color.Lerp(edgeColor, Constraints.EdgeHighlight, EdgeHighlightBlend());
+            }
+            else if (highlight < 0)
+            {
+                edgeColor = edgeColor.WithAlpha(edgeColor.a * EdgeUnfocusAlpha());
+            }
+
+            float width = Mathf.Max(Constraints.EdgeLineMinWidth, Constraints.EdgeLineWidth * zoom);
+            EdgeRenderer.DrawStraightRibbon(startScreen, endScreen, edgeColor, edgeColor, width);
         }
 
         // 프록시 노드 용
@@ -343,8 +356,6 @@ namespace YART
         private void DrawNodeForeground(ResearchNode node, Vector2 offset, float zoom)
         {
             if (node.IsDummy) return;
-
-            // Culling
             if (!visibleRect.Overlaps(node.Rect)) return;
 
             Rect nodeRectScreen = GetNodeScreenRect(node, offset, zoom);
@@ -360,20 +371,17 @@ namespace YART
                 nodeAlpha = 0.75f; // 배경의 Locked 알파와 일치
             }
 
-            // Focus/Search dimming — 매치는 기본 표시, 비매치만 디밍 (Def 기준)
+            // 검색 비매치/비포커스 디밍 (Def 기준)
             float unfocusMul = GetUnfocusMultiplier(node);
             if (unfocusMul < 1f)
             {
                 nodeAlpha *= unfocusMul;
-                textColor.a *= nodeAlpha; // Fade text
+                textColor.a *= nodeAlpha;
             }
 
-            float richLerp = GetRichCardLerp(zoom);
-
-            // Apply global color for text
             GUI.color = textColor;
 
-            // 저줌: 배지/리치 카드는 숨기되 라벨은 매트릭스 스케일로 축소해서 유지
+            // 저줌: 배지/리치 카드는 숨기되 라벨은 매트릭스 스케일로 축소해 유지
             // (IMGUI 폰트는 Tiny/Small/Medium 3단계 고정이라 직접 줄일 수 없음)
             if (zoom < Constraints.NodeTextMinZoom)
             {
@@ -382,45 +390,21 @@ namespace YART
             }
 
             // 대표 해금 아이콘 유무 — 라벨/리치 스트립을 그만큼 좌측 인셋
-            var realForRep = node.IsProxy ? node.OriginalNode : node;
+            var realForRep = RealNodeOf(node);
             bool hasRep = !node.IsHidden && realForRep.UnlockedDefs.Count > 0;
-            float repInset = hasRep ? RepInset(zoom) : 0f;
+            float richLerp = GetRichCardLerp(zoom);
 
-            // 텍스트 그리기
-            // Calculate text area
-            Rect textRect = nodeRectScreen;
-            if (zoom >= 0.5f)
-            {
-                // 진행바가 보이는 노드는 텍스트 영역을 위로 양보 (배경의 진행바 조건과 동일)
-                float bottomPadding = (state != ResearchNodeState.Completed && node.Progress > 0f) ? 6f * zoom : 0f;
-                textRect = new Rect(
-                    nodeRectScreen.x + 4f * zoom + repInset,
-                    nodeRectScreen.y,
-                    nodeRectScreen.width - 8f * zoom - repInset,
-                    nodeRectScreen.height - bottomPadding
-                );
-
-                if (richLerp > 0.05f)
-                {
-                    // 리치 카드: 라벨은 상단 영역에 고정
-                    textRect.height = 22f * zoom;
-                    textRect.y += 3f * zoom;
-                }
-            }
-
-            // 대표 아이콘이 있으면 라벨을 좌측 정렬(아이콘 옆에 붙도록), 없으면 기존 중앙 정렬
+            // 대표 아이콘이 있으면 라벨을 좌측 정렬(아이콘 옆에 붙도록), 없으면 중앙 정렬
             Text.Anchor = hasRep ? TextAnchor.MiddleLeft : TextAnchor.MiddleCenter;
-            // Direct Label call avoiding Temporary wrapper overhead inside loop
-            Widgets.Label(textRect, node.Label);
+            Widgets.Label(ComputeNodeLabelRect(node, nodeRectScreen, zoom, hasRep, richLerp), node.Label);
             Text.Anchor = TextAnchor.MiddleCenter; // 루프 공유 상태 복원
 
-            // 대표 아이콘 (좌측, 세로 중앙) — LOD(리치 미표시)에서도 "무엇을 해금하는지" 단서 제공
+            // 대표 아이콘 (좌측, 세로 중앙) — 리치 카드가 안 보이는 줌에서도 "무엇을 해금하는지" 단서
             if (hasRep)
             {
                 DrawRepresentativeIcon(realForRep, nodeRectScreen, zoom, nodeAlpha, textColor);
             }
 
-            // 노드 우측에 출처 모드/DLC 아이콘
             DrawNodeModIcon(node, nodeRectScreen, zoom, nodeAlpha, textColor);
 
             if (richLerp > 0.05f && !node.IsHidden)
@@ -436,17 +420,39 @@ namespace YART
             DrawExternalDependentsBadge(node, nodeRectScreen, zoom, nodeAlpha);
         }
 
+        /// <summary>노드 라벨의 그리기 영역. 진행바/대표 아이콘/리치 카드 유무에 따라 좁아진다.</summary>
+        private static Rect ComputeNodeLabelRect(ResearchNode node, Rect nodeRectScreen, float zoom, bool hasRep, float richLerp)
+        {
+            if (zoom < 0.5f) return nodeRectScreen;
+
+            float repInset = hasRep ? RepInset(zoom) : 0f;
+            // 진행바가 보이는 노드는 텍스트 영역을 위로 양보 (배경의 진행바 조건과 동일)
+            float bottomPadding = (node.State != ResearchNodeState.Completed && node.Progress > 0f) ? 6f * zoom : 0f;
+            Rect textRect = new Rect(
+                nodeRectScreen.x + 4f * zoom + repInset,
+                nodeRectScreen.y,
+                nodeRectScreen.width - 8f * zoom - repInset,
+                nodeRectScreen.height - bottomPadding);
+
+            if (richLerp > 0.05f)
+            {
+                // 리치 카드: 라벨은 상단 영역에 고정
+                textRect.height = 22f * zoom;
+                textRect.y += 3f * zoom;
+            }
+            return textRect;
+        }
+
         private static readonly System.Text.StringBuilder nodeTooltipSb = new System.Text.StringBuilder(512);
 
         /// <summary>
-        /// 노드 호버 툴팁 본문: 이름 / 설명 / 진행도(바닐라 ProgressApparent / CostApparent 표기)
-        /// / Locked면 그 사유. 미발견(IsHidden) 연구는 마스킹된 라벨만 보여준다.
-        /// showTabLine=true(통합 뷰)이면 탭 출처 한 줄을 추가한다.
+        /// 노드 호버 툴팁: 이름 / 설명 / 진행도(바닐라 ProgressApparent·CostApparent 표기) / Locked 사유.
+        /// 미발견(IsHidden) 연구는 마스킹된 라벨만. showTabLine=true(통합 뷰)면 탭 출처 한 줄 추가.
         /// TipSignal textGetter로 호출되므로 실제 표시 직전에만 실행된다.
         /// </summary>
         private static string BuildNodeTooltip(ResearchNode node, bool showTabLine = false)
         {
-            var real = node.IsProxy ? node.OriginalNode : node;
+            var real = RealNodeOf(node);
             if (real.IsHidden) return real.Label;
 
             var sb = nodeTooltipSb;
@@ -483,13 +489,12 @@ namespace YART
                 }
             }
 
-            // 통합 벤치 뷰: 이 연구가 속한 탭을 한 줄로 표시 (프록시/더미 아닌 실노드 + Tab이 있을 때만)
+            // 통합 벤치 뷰: 실노드 + Tab이 있을 때만 소속 탭 한 줄
             if (showTabLine && !node.IsProxy && !node.IsDummy && real.Tab != null)
             {
                 sb.AppendLine().Append((string)"YART_Tab".Translate(real.Tab.LabelCap));
             }
 
-            // 안내 푸터
             if (real.State == ResearchNodeState.Available && !SemiRandomResearchCompat.Active)
             {
                 sb.AppendLine().AppendLine();
@@ -503,8 +508,7 @@ namespace YART
 
         /// <summary>
         /// NodeTextMinZoom 미만 저줌용 라벨. GUI 매트릭스를 줌 비율로 스케일해 Tiny 폰트를
-        /// 더 작게 그린다 — 스케일된 비트맵이라 다소 흐릿하지만 최소 줌에서도 라벨이 보인다.
-        /// 피벗은 GUI 논리 좌표(그릴 때 쓰는 좌표계 그대로)여야 한다.
+        /// 더 작게 그린다. 피벗은 1.6(Unity)에선 GUI 논리 좌표, 1.7(UnityStubs)에선 물리 픽셀 오프셋.
         /// </summary>
         private static void DrawScaledNodeLabel(ResearchNode node, Rect nodeRectScreen, float zoom)
         {
@@ -518,16 +522,21 @@ namespace YART
                 nodeRectScreen.height / scale);
 
             Matrix4x4 prevMatrix = GUI.matrix;
+#if RW17
+            // 1.7 UnityStubs의 ScaleAroundPivot은 matrix x 클립 원점 + pivotPoint로 피벗을 잡기 때문에
+            // pivotPoint를 물리 픽셀 오프셋으로 받아야 한다 -> 논리 피벗을 매트릭스로 변환해 넘긴다 (쉬프팅 방지)
+            GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), prevMatrix.MultiplyVector(pivot));
+#else
             GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), pivot);
+#endif
             Widgets.Label(inflated, node.Label);
             GUI.matrix = prevMatrix;
         }
 
         /// <summary>
-        /// 다른 그래프(탭/채널)의 연구가 이 노드를 선행으로 요구하면 우상단에 작은 배지를 그린다.
+        /// 다른 그래프(탭/채널)의 연구가 이 노드를 선행으로 요구하면 우상단에 배지를 그린다.
         /// 역방향 프록시로 그래프를 범람시키는 대신 배지 + 호버 팝업으로 노출하는 방식.
-        /// 미발견(IsHidden) 후행도 카운트에 포함 — 캔버스 본체와 동일하게 라벨만 마스킹된다
-        /// (아노말리처럼 채널이 다른 의존이 코덱스 미발견이라는 이유로 사라져 보이지 않게).
+        /// 미발견 후행도 카운트에 포함 — 캔버스 본체와 동일하게 라벨만 마스킹된다.
         /// </summary>
         private void DrawExternalDependentsBadge(ResearchNode node, Rect nodeRectScreen, float zoom, float nodeAlpha)
         {
@@ -566,25 +575,7 @@ namespace YART
         /// </summary>
         private void DrawExternalDependentsPopup()
         {
-            // 이번 프레임 배지 호버가 있으면 활성/대상 전환
-            if (externalListCandidate != null)
-            {
-                if (externalListNode != externalListCandidate) externalListPage = 0;
-                externalListNode = externalListCandidate;
-                externalListAnchor = externalListCandidateAnchor;
-                externalListCandidate = null;
-            }
-            else if (externalListNode != null)
-            {
-                // 배지도 팝업도 호버 중이 아니면 닫기 (여유 6px — 이동 중 깜빡임 방지)
-                Vector2 mouse = Event.current.mousePosition;
-                if (!externalListRect.ExpandedBy(6f).Contains(mouse)
-                    && !externalListAnchor.ExpandedBy(6f).Contains(mouse))
-                {
-                    externalListNode = null;
-                }
-            }
-
+            UpdateExternalListTarget();
             if (externalListNode == null)
             {
                 externalListRect = Rect.zero;
@@ -619,98 +610,118 @@ namespace YART
 
             float curY = externalListRect.y + 6f;
 
-            // 헤더
-            using (Temporary.Font(GameFont.Tiny))
-            using (Temporary.Anchor(TextAnchor.MiddleLeft))
-            using (Temporary.Color(new Color(0.55f, 0.62f, 0.78f)))
-            {
-                Widgets.Label(new Rect(externalListRect.x + 8f, curY, externalListRect.width - 16f, headerH),
-                    "YART_RequiredByExternal".Translate(ext.Count));
-            }
+            DrawTinyLabel(new Rect(externalListRect.x + 8f, curY, externalListRect.width - 16f, headerH),
+                "YART_RequiredByExternal".Translate(ext.Count), new Color(0.55f, 0.62f, 0.78f), TextAnchor.MiddleLeft);
             curY += headerH;
 
-            // 행 (시대 색 점 + 라벨(미발견은 자동 마스킹) + 소속 그래프)
             for (int i = start; i < start + rows; i++)
             {
-                var child = ext[i];
-                bool hidden = child.IsHidden;
                 Rect rowRect = new Rect(externalListRect.x + 2f, curY, externalListRect.width - 4f, rowH);
-                if (!hidden && Mouse.IsOver(rowRect)) Widgets.DrawHighlight(rowRect);
-
-                Rect dotRect = new Rect(rowRect.x + 6f, rowRect.y + rowH / 2f - 3f, 6f, 6f);
-                Widgets.DrawBoxSolid(dotRect, hidden ? new Color(0.4f, 0.4f, 0.45f) : child.EraAccentColor);
-
-                // child는 실노드 — 벤치면 Tab 라벨(널 가드), 그 외 채널 라벨
-                string tabLabel = child.Key.Channel.IsBench && child.Key.Tab != null
-                    ? (string)child.Key.Tab.LabelCap
-                    : child.Key.Channel.Label;
-                using (Temporary.Font(GameFont.Tiny))
-                using (Temporary.Anchor(TextAnchor.MiddleLeft))
-                using (Temporary.Color(hidden ? new Color(0.5f, 0.5f, 0.55f) : Color.white))
-                {
-                    Widgets.Label(new Rect(rowRect.x + 18f, rowRect.y, rowRect.width - 110f, rowH),
-                        child.Label.Truncate(rowRect.width - 110f));
-                }
-                using (Temporary.Font(GameFont.Tiny))
-                using (Temporary.Anchor(TextAnchor.MiddleRight))
-                using (Temporary.Color(new Color(0.5f, 0.55f, 0.65f)))
-                {
-                    Widgets.Label(new Rect(rowRect.x, rowRect.y, rowRect.width - 6f, rowH), tabLabel.Truncate(86f));
-                }
-
-                if (!hidden && Widgets.ButtonInvisible(rowRect))
-                {
-                    // 출발 노드(배지 주인)를 먼저 히스토리에 넣고 점프 — 좌측 패널 이전(<)
-                    // 버튼으로 원래 보던 연구/그래프로 돌아올 수 있게 한다
-                    if (!history.HasCurrent || history.Current != externalListNode)
-                    {
-                        history.Push(externalListNode);
-                    }
-                    JumpToNode(child);
-                    externalListNode = null;
-                    externalListRect = Rect.zero;
-                    return;
-                }
+                if (DrawExternalDependentRow(rowRect, ext[i])) return; // 점프 시 팝업 종료
                 curY += rowH;
             }
 
-            // 페이지네이션 (◀ n/m ▶)
             if (pages > 1)
             {
-                float btnSize = 22f;
-                Rect prevRect = new Rect(externalListRect.x + 8f, curY + 2f, btnSize, btnSize);
-                Rect nextRect = new Rect(externalListRect.xMax - 8f - btnSize, curY + 2f, btnSize, btnSize);
-                if (DrawNavButton(prevRect, "<", externalListPage > 0)) externalListPage--;
-                if (DrawNavButton(nextRect, ">", externalListPage < pages - 1)) externalListPage++;
-
-                using (Temporary.Font(GameFont.Tiny))
-                using (Temporary.Anchor(TextAnchor.MiddleCenter))
-                using (Temporary.Color(new Color(0.6f, 0.65f, 0.75f)))
-                {
-                    Widgets.Label(new Rect(prevRect.xMax, curY + 2f, nextRect.x - prevRect.xMax, btnSize),
-                        $"{externalListPage + 1} / {pages}");
-                }
+                DrawExternalListPagination(curY, pages);
             }
         }
 
-        /// <summary>
-        /// 리치 카드(C) 추가 콘텐츠: 해금 아이콘 스트립 + 비용. 줌인 시 알파 페이드 인.
-        /// </summary>
+        /// <summary>이번 프레임 배지 호버 결과로 팝업 대상을 갱신/유지/닫기.</summary>
+        private void UpdateExternalListTarget()
+        {
+            if (externalListCandidate != null)
+            {
+                if (externalListNode != externalListCandidate) externalListPage = 0;
+                externalListNode = externalListCandidate;
+                externalListAnchor = externalListCandidateAnchor;
+                externalListCandidate = null;
+                return;
+            }
+
+            if (externalListNode == null) return;
+
+            // 배지도 팝업도 호버 중이 아니면 닫기 (여유 6px — 이동 중 깜빡임 방지)
+            Vector2 mouse = Event.current.mousePosition;
+            if (!externalListRect.ExpandedBy(6f).Contains(mouse)
+                && !externalListAnchor.ExpandedBy(6f).Contains(mouse))
+            {
+                externalListNode = null;
+            }
+        }
+
+        /// <summary>팝업 한 행 (시대 색 점 + 라벨 + 소속 그래프). 클릭으로 점프했으면 true.</summary>
+        private bool DrawExternalDependentRow(Rect rowRect, ResearchNode child)
+        {
+            bool hidden = child.IsHidden;
+            if (!hidden && Mouse.IsOver(rowRect)) Widgets.DrawHighlight(rowRect);
+
+            Rect dotRect = new Rect(rowRect.x + 6f, rowRect.y + rowRect.height / 2f - 3f, 6f, 6f);
+            Widgets.DrawBoxSolid(dotRect, hidden ? new Color(0.4f, 0.4f, 0.45f) : child.EraAccentColor);
+
+            // child는 실노드 — 벤치면 Tab 라벨(널 가드), 그 외 채널 라벨
+            string tabLabel = child.Key.Channel.IsBench && child.Key.Tab != null
+                ? (string)child.Key.Tab.LabelCap
+                : child.Key.Channel.Label;
+
+            DrawTinyLabel(new Rect(rowRect.x + 18f, rowRect.y, rowRect.width - 110f, rowRect.height),
+                child.Label.Truncate(rowRect.width - 110f),
+                hidden ? new Color(0.5f, 0.5f, 0.55f) : Color.white, TextAnchor.MiddleLeft);
+            DrawTinyLabel(new Rect(rowRect.x, rowRect.y, rowRect.width - 6f, rowRect.height),
+                tabLabel.Truncate(86f), new Color(0.5f, 0.55f, 0.65f), TextAnchor.MiddleRight);
+
+            if (hidden || !Widgets.ButtonInvisible(rowRect)) return false;
+
+            // 출발 노드(배지 주인)를 먼저 히스토리에 넣고 점프 — 좌측 패널 이전(<) 버튼으로 돌아올 수 있게
+            if (!history.HasCurrent || history.Current != externalListNode)
+            {
+                history.Push(externalListNode);
+            }
+            JumpToNode(child);
+            externalListNode = null;
+            externalListRect = Rect.zero;
+            return true;
+        }
+
+        /// <summary>팝업 하단 페이지네이션 (◀ n/m ▶).</summary>
+        private void DrawExternalListPagination(float curY, int pages)
+        {
+            const float btnSize = 22f;
+            Rect prevRect = new Rect(externalListRect.x + 8f, curY + 2f, btnSize, btnSize);
+            Rect nextRect = new Rect(externalListRect.xMax - 8f - btnSize, curY + 2f, btnSize, btnSize);
+            if (DrawNavButton(prevRect, "<", externalListPage > 0)) externalListPage--;
+            if (DrawNavButton(nextRect, ">", externalListPage < pages - 1)) externalListPage++;
+
+            DrawTinyLabel(new Rect(prevRect.xMax, curY + 2f, nextRect.x - prevRect.xMax, btnSize),
+                $"{externalListPage + 1} / {pages}", new Color(0.6f, 0.65f, 0.75f), TextAnchor.MiddleCenter);
+        }
+
+        /// <summary>리치 카드(C) 추가 콘텐츠: 해금 아이콘 스트립 + 비용 행. 줌인 시 알파 페이드 인.</summary>
         private void DrawRichCardContent(ResearchNode node, Rect nodeRectScreen, float zoom, float alpha)
         {
-            var realNode = node.IsProxy ? node.OriginalNode : node;
+            var realNode = RealNodeOf(node);
             var unlocked = realNode.UnlockedDefs;
 
             var prevColor = GUI.color;
             var prevFont = Text.Font;
             var prevAnchor = Text.Anchor;
 
-            // 해금 아이콘 스트립 — 대표(index 0)는 좌측에 따로(DrawRepresentativeIcon), 여기선 나머지 1.. 최대 8개.
+            DrawRichCardUnlockStrip(unlocked, nodeRectScreen, zoom, alpha);
+            DrawRichCardCostRow(realNode, nodeRectScreen, zoom, alpha);
+
+            // 루프 공유 상태 복원
+            GUI.color = prevColor;
+            Text.Font = prevFont;
+            Text.Anchor = prevAnchor;
+        }
+
+        /// <summary>해금 아이콘 스트립 — 대표(index 0)는 좌측에 따로 그리므로 여기선 1..RichCardStripMax개.</summary>
+        private static void DrawRichCardUnlockStrip(List<Def> unlocked, Rect nodeRectScreen, float zoom, float alpha)
+        {
             bool hasRep = unlocked.Count > 0;
             GetRichCardIconMetrics(nodeRectScreen, zoom, hasRep, out float iconSize, out float iconGap, out float iconX, out float iconY);
 
             GUI.color = new Color(1f, 1f, 1f, alpha);
-            int afterRep = unlocked.Count - 1; // 대표 제외 남은 개수
             int shown = 0;
             for (int i = 1; i < unlocked.Count && shown < RichCardStripMax; i++)
             {
@@ -727,6 +738,7 @@ namespace YART
             Text.Font = GameFont.Tiny;
             Text.Anchor = TextAnchor.MiddleLeft;
 
+            int afterRep = unlocked.Count - 1; // 대표 제외 남은 개수
             if (afterRep > shown)
             {
                 Rect moreRect = new Rect(iconX + shown * (iconSize + iconGap), iconY, 30f * zoom, iconSize);
@@ -743,16 +755,21 @@ namespace YART
                 GUI.color = new Color(0.45f, 0.52f, 0.62f, alpha * 0.8f);
                 Widgets.Label(noneRect, "-");
             }
+        }
 
-            // 우하단 비용 행 — 우→좌로 [비용] [테크프린트 카운트] [테크프린트 아이콘] 배치
-            // (바닐라 DrawBottomRow의 "비용 | 테크프린트" 그룹핑과 동일). 리치 카드는 줌 1.1 이상에서만 보임.
+        /// <summary>
+        /// 우하단 비용 행 — 우→좌로 [비용] [테크프린트 카운트] [테크프린트 아이콘]
+        /// (바닐라 DrawBottomRow의 "비용 | 테크프린트" 그룹핑과 동일).
+        /// </summary>
+        private static void DrawRichCardCostRow(ResearchNode realNode, Rect nodeRectScreen, float zoom, float alpha)
+        {
             float rowY = nodeRectScreen.yMax - 22f * zoom;
             float rowH = 19f * zoom;
             float right = nodeRectScreen.xMax - 6f * zoom;
             Text.Font = GameFont.Small;
             Text.Anchor = TextAnchor.MiddleRight;
 
-            // 비용 (가장 오른쪽) — CostApparent (Cost = baseCost 또는 knowledgeCost, × 테크레벨 계수)
+            // CostApparent = baseCost(또는 knowledgeCost) × 테크레벨 계수
             string costStr = realNode.Def.CostApparent.ToString("N0");
             if (realNode.State != ResearchNodeState.Completed && realNode.Progress > 0f)
             {
@@ -763,30 +780,24 @@ namespace YART
             Widgets.Label(new Rect(right - costW, rowY, costW, rowH), costStr);
             right -= costW + 8f * zoom;
 
-            // 테크프린트 요구 (비용 왼쪽) — 색=충족(초록)/미충족(빨강), 아이콘은 바닐라처럼 흰색 틴트
-            if (realNode.Def.TechprintCount > 0)
-            {
-                bool met = realNode.Def.TechprintRequirementMet;
-                string tpStr = realNode.Def.TechprintsApplied + "/" + realNode.Def.TechprintCount;
-                float tpW = Text.CalcSize(tpStr).x;
-                GUI.color = (met ? ActiveColors.PrereqMet : ActiveColors.PrereqUnmet).WithAlpha(alpha);
-                Widgets.Label(new Rect(right - tpW, rowY, tpW, rowH), tpStr);
-                right -= tpW + 2f * zoom;
+            if (realNode.Def.TechprintCount <= 0) return;
 
-                float iconSz = 15f * zoom;
-                GUI.color = new Color(1f, 1f, 1f, alpha);
-                GUI.DrawTexture(new Rect(right - iconSz, rowY + (rowH - iconSz) / 2f, iconSz, iconSz),
-                    Assets.IconTechprint, ScaleMode.ScaleToFit);
-            }
+            // 색=충족(초록)/미충족(빨강), 아이콘은 바닐라처럼 흰색 틴트
+            bool met = realNode.Def.TechprintRequirementMet;
+            string tpStr = realNode.Def.TechprintsApplied + "/" + realNode.Def.TechprintCount;
+            float tpW = Text.CalcSize(tpStr).x;
+            GUI.color = (met ? ActiveColors.PrereqMet : ActiveColors.PrereqUnmet).WithAlpha(alpha);
+            Widgets.Label(new Rect(right - tpW, rowY, tpW, rowH), tpStr);
+            right -= tpW + 2f * zoom;
 
-            // 루프 공유 상태 복원
-            GUI.color = prevColor;
-            Text.Font = prevFont;
-            Text.Anchor = prevAnchor;
+            float iconSz = 15f * zoom;
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            GUI.DrawTexture(new Rect(right - iconSz, rowY + (rowH - iconSz) / 2f, iconSz, iconSz),
+                Assets.IconTechprint, ScaleMode.ScaleToFit);
         }
 
         /// <summary>
-        /// 대표 해금 아이콘(unlocked[0])을 노드 좌측 세로 중앙에 그린다. 텍스처 없으면 placeholder.
+        /// 대표 해금 아이콘(unlocked[0])을 노드 좌측 세로 중앙에 그린다.
         /// GUI.color는 그린 뒤 restoreColor로 복원(전경 루프의 텍스트 색 유지).
         /// </summary>
         private void DrawRepresentativeIcon(ResearchNode realNode, Rect nodeRectScreen, float zoom, float alpha, Color restoreColor)
@@ -805,8 +816,7 @@ namespace YART
         }
 
         // packageId → 출처 아이콘 캐시.
-        //  · 공식 컨텐츠(Core·DLC)는 ExpansionDef.Icon (Core=UI/HeroArt/RimWorldLogo, DLC=각 확장 아이콘)
-        //  · 그 외 모드는 ModMetaData.Icon (modIconPath → About/ModIcon.png → 기본 모드 아이콘, 모드 목록과 동일)
+        //  · 공식 컨텐츠(Core·DLC)는 ExpansionDef.Icon, 그 외 모드는 ModMetaData.Icon(모드 목록과 동일)
         private static readonly Dictionary<string, Texture2D> modIconCache = new Dictionary<string, Texture2D>();
         private static Dictionary<string, ExpansionDef> expansionByMod; // packageId(소문자) → ExpansionDef
 
@@ -830,8 +840,8 @@ namespace YART
             }
 
             Texture2D tex = expansionByMod.TryGetValue(pid, out var expansion)
-                ? expansion.Icon          // 공식 컨텐츠 고유 아이콘
-                : mod.ModMetaData?.Icon;   // 그 외 모드 (modIconPath → About/ModIcon.png → 기본 폴백)
+                ? expansion.Icon
+                : mod.ModMetaData?.Icon;
             modIconCache[pid] = tex; // null도 캐시해 재조회 방지
             return tex;
         }
@@ -841,7 +851,7 @@ namespace YART
             if (!YARTMod.Settings.showNodeSourceIcon) return;
             if (node.IsHidden) return; // 미발견 연구는 출처 노출 안 함
 
-            var def = node.IsProxy ? node.OriginalNode?.Def : node.Def;
+            var def = RealNodeOf(node)?.Def;
             var icon = def?.GetModExtension<ResearchNodeExtension>()?.Icon ?? GetModIcon(node.SourceMod);
             if (icon == null) return;
 
@@ -861,23 +871,21 @@ namespace YART
         }
 
         /// <summary>
-        /// 저줌(리치 카드 미표시)에서 테크프린트 요구를 알리는 작은 마커. 모드 아이콘 바로 아래 같은
-        /// 가로 슬롯에 배치하며, 색=충족(초록)/미충족(빨강)으로 트리 스캔만으로 막힌 노드를 식별하게 한다.
-        /// 카운트는 줌 인 시 비용 옆에서 확인(상호배타). 미발견·테크프린트 없는 노드는 생략.
+        /// 저줌(리치 카드 미표시)에서 테크프린트 요구를 알리는 마커. 모드 아이콘 바로 아래 같은 가로
+        /// 슬롯에 배치하며, 색=충족(초록)/미충족(빨강)으로 트리 스캔만으로 막힌 노드를 식별하게 한다.
         /// </summary>
         private void DrawTechprintLowZoomMarker(ResearchNode node, Rect nodeRectScreen, float zoom, float alpha)
         {
             if (node.IsHidden) return;
-            var def = node.IsProxy ? node.OriginalNode.Def : node.Def;
+            var def = RealNodeOf(node).Def;
             if (def == null || def.TechprintCount <= 0) return;
 
             Rect modSlot = ModIconSlot(node, nodeRectScreen, zoom);
             float markSz = 13f * zoom;
             Rect r = new Rect(modSlot.center.x - markSz / 2f, modSlot.yMax + 2f * zoom, markSz, markSz);
 
-            bool met = def.TechprintRequirementMet;
             var prevColor = GUI.color;
-            GUI.color = (met ? ActiveColors.PrereqMet : ActiveColors.PrereqUnmet).WithAlpha(alpha);
+            GUI.color = (def.TechprintRequirementMet ? ActiveColors.PrereqMet : ActiveColors.PrereqUnmet).WithAlpha(alpha);
             GUI.DrawTexture(r, Assets.IconTechprint, ScaleMode.ScaleToFit);
             GUI.color = prevColor;
         }
@@ -888,13 +896,10 @@ namespace YART
             if (zoom < 0.5f) return false;
             var qm = ResearchQueueManager.Instance;
             if (qm == null) return false;
-            var def = node.IsProxy ? node.OriginalNode.Def : node.Def;
-            return node.State == ResearchNodeState.InProgress || qm.GetQueuePosition(def) > 0;
+            return node.State == ResearchNodeState.InProgress || qm.GetQueuePosition(RealNodeOf(node).Def) > 0;
         }
 
-        /// <summary>
-        /// 노드 우측에 큐 순번(대기) 또는 ▶(진행 중) 배지를 그립니다.
-        /// </summary>
+        /// <summary>노드 우측에 큐 순번(대기) 또는 ▶(진행 중) 배지를 그립니다.</summary>
         private void DrawQueueBadge(ResearchNode node, Rect nodeRectScreen, float zoom, float nodeAlpha)
         {
             if (zoom < 0.5f) return;
@@ -902,9 +907,8 @@ namespace YART
             var queueMgr = ResearchQueueManager.Instance;
             if (queueMgr == null) return;
 
-            var def = node.IsProxy ? node.OriginalNode.Def : node.Def;
             bool isCurrent = node.State == ResearchNodeState.InProgress;
-            int pos = queueMgr.GetQueuePosition(def);
+            int pos = queueMgr.GetQueuePosition(RealNodeOf(node).Def);
             if (!isCurrent && pos < 0) return;
 
             float size = Mathf.Max(18f, 26f * zoom);

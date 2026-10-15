@@ -22,10 +22,11 @@ namespace YART
         private float panelHeightCacheValue;
         private float panelHeightCacheTime = float.NegativeInfinity;
 
+        private const float PanelPadding = 12f;
+
         /// <summary>
-        /// TechLevel 표시 라벨. 바닐라 ToStringHuman은 Undefined에 대한 번역 키("Undefined")가
-        /// Enums.xml에 없어 번역 실패(릴리스: 키 평문 노출, DevMode: 의사번역)한다.
-        /// techLevel을 지정하지 않은 연구(=Undefined)만 YART 키로 대체하고, 나머지는 바닐라 라벨 사용.
+        /// TechLevel 표시 라벨. 바닐라 ToStringHuman은 Undefined에 대한 번역 키가 Enums.xml에 없어
+        /// 번역에 실패한다(릴리스: 키 평문 노출). Undefined만 YART 키로 대체하고 나머지는 바닐라 라벨.
         /// </summary>
         private static string TechLevelLabel(TechLevel tl)
         {
@@ -36,303 +37,331 @@ namespace YART
 
         private void DoLeftRect(Rect rect)
         {
-            // Glass panel background
             Widgets.DrawBoxSolid(rect, Constraints.PanelBg);
+            if (!history.HasCurrent) return;
 
-            if (history.HasCurrent)
+            var currentNode = history.Current;
+            Color eraColor = currentNode.EraAccentColor;
+
+            GUIDrawingUtilities.DrawTopAccentBar(rect, eraColor, 4f);
+            GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
+
+            if (!DrawPanelNavButtons(rect, ref currentNode)) return; // 닫기(X) — 이번 프레임 종료
+
+            const float headerHeight = 45f;
+            // 실제 콘텐츠 폭 = viewRect(rect.width-20) - 16 — 높이 계산도 같은 폭을 써야 한다
+            float contentWidth = rect.width - 36f;
+            Rect viewRect = new Rect(0, 0, rect.width - 20, GetCachedPanelHeight(currentNode, contentWidth));
+            Rect scrollRect = new Rect(rect.x, rect.y + headerHeight, rect.width, rect.height - headerHeight);
+
+            Widgets.BeginScrollView(scrollRect, ref leftPanelScrollPosition, viewRect);
+            DrawPanelBody(currentNode, eraColor, contentWidth);
+            Widgets.EndScrollView();
+        }
+
+        /// <summary>패널 우상단 내비 버튼 (ⓘ / ＜ / ＞ / X). 닫혔으면 false — 호출자는 즉시 종료해야 한다.</summary>
+        private bool DrawPanelNavButtons(Rect rect, ref ResearchNode currentNode)
+        {
+            const float btnSize = 24f;
+            const float gap = 4f;
+            float btnY = rect.y + 10f;
+            float btnX = rect.xMax - btnSize - 8f;
+
+            if (DrawNavButton(new Rect(btnX, btnY, btnSize, btnSize), "X", true))
             {
-                var currentNode = history.Current;
-                Color eraColor = currentNode.EraAccentColor;
-
-                // Top accent bar (era color)
-                GUIDrawingUtilities.DrawTopAccentBar(rect, eraColor, 4f);
-
-                // Panel border
-                GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
-
-                // Navigation Buttons (Top Right)
-                float btnSize = 24f;
-                float gap = 4f;
-                float btnY = rect.y + 10f;
-                float btnX = rect.xMax - btnSize - 8f;
-
-                // Close (X)
-                Rect closeRect = new Rect(btnX, btnY, btnSize, btnSize);
-                if (DrawNavButton(closeRect, "X", true))
-                {
-                    history.Clear();
-                    return;
-                }
-                btnX -= (btnSize + gap);
-
-                // Forward (>)
-                Rect forwardRect = new Rect(btnX, btnY, btnSize, btnSize);
-                if (DrawNavButton(forwardRect, ">", history.CanRedo))
-                {
-                    history.Redo();
-                    leftPanelScrollPosition = Vector2.zero;
-                    currentNode = history.Current;
-                    NavigateToHistoryNode(currentNode);
-                }
-                btnX -= (btnSize + gap);
-
-                // Back (<)
-                Rect backRect = new Rect(btnX, btnY, btnSize, btnSize);
-                if (DrawNavButton(backRect, "<", history.CanUndo))
-                {
-                    history.Undo();
-                    leftPanelScrollPosition = Vector2.zero;
-                    currentNode = history.Current;
-                    NavigateToHistoryNode(currentNode);
-                }
-                btnX -= (btnSize + gap);
-
-                // Info card (ⓘ) — 바닐라 위젯, 클릭 시 Dialog_InfoCard를 스스로 연다
-                Widgets.InfoCardButton(new Rect(btnX, btnY, btnSize, btnSize), currentNode.Def);
-
-                // 스크롤 영역 설정
-                float headerHeight = 45f;
-                // 실제 콘텐츠 폭 = viewRect(rect.width-20) - 16 — 높이 계산도 같은 폭 사용 (구 고정폭 260 불일치 수정)
-                float heightContentWidth = rect.width - 36f;
-                if (panelHeightCacheNode != currentNode || panelHeightCacheWidth != heightContentWidth
-                    || Time.realtimeSinceStartup - panelHeightCacheTime > 0.5f)
-                {
-                    panelHeightCacheValue = CalculateLeftPanelHeight(currentNode, heightContentWidth);
-                    panelHeightCacheNode = currentNode;
-                    panelHeightCacheWidth = heightContentWidth;
-                    panelHeightCacheTime = Time.realtimeSinceStartup;
-                }
-                Rect viewRect = new Rect(0, 0, rect.width - 20, panelHeightCacheValue);
-                Rect scrollRect = new Rect(rect.x, rect.y + headerHeight, rect.width, rect.height - headerHeight);
-
-                Widgets.BeginScrollView(scrollRect, ref leftPanelScrollPosition, viewRect);
-
-                float y = 0;
-                float contentWidth = viewRect.width - 16;
-                float padding = 12f;
-
-                // 연구 제목 (with era color) + 우측 출처 모드/DLC 아이콘
-                var titleIcon = currentNode.IsHidden ? null : GetModIcon(currentNode.SourceMod);
-                const float titleIconSz = 24f;
-                float titleW = contentWidth - (titleIcon != null ? titleIconSz + 6f : 0f);
-                using (Temporary.Font(GameFont.Medium))
-                using (Temporary.Anchor(TextAnchor.UpperLeft))
-                using (Temporary.Color(eraColor))
-                {
-                    Widgets.Label(new Rect(padding, y, titleW, 30), currentNode.Label);
-                }
-                if (titleIcon != null)
-                {
-                    Rect titleIconRect = new Rect(padding + contentWidth - titleIconSz, y + 3f, titleIconSz, titleIconSz);
-                    var prevTitleColor = GUI.color;
-                    GUI.color = Color.white;
-                    GUI.DrawTexture(titleIconRect, titleIcon, ScaleMode.ScaleToFit);
-                    GUI.color = prevTitleColor;
-                    if (Mouse.IsOver(titleIconRect) && currentNode.SourceMod != null)
-                    {
-                        TooltipHandler.TipRegion(titleIconRect, currentNode.SourceMod.Name);
-                    }
-                }
-                y += 32;
-
-                // Tech Level Badge
-                string techLevelText = TechLevelLabel(currentNode.TechLevel);
-                Rect badgeRect = new Rect(padding, y, 80, 20);
-                Widgets.DrawBoxSolid(badgeRect, GenColor.WithAlpha(eraColor, 0.3f));
-                GUIDrawingUtilities.DrawBorderLines(badgeRect, GenColor.WithAlpha(eraColor, 0.6f), 1f);
-                using (Temporary.Font(GameFont.Tiny))
-                using (Temporary.Anchor(TextAnchor.MiddleCenter))
-                {
-                    Widgets.Label(badgeRect, techLevelText);
-                }
-                y += 28;
-
-                // 설명
-                using (Temporary.Font(GameFont.Small))
-                using (Temporary.Color(new Color(0.8f, 0.8f, 0.85f)))
-                {
-                    float descHeight = Text.CalcHeight(currentNode.Def.description, contentWidth);
-                    Widgets.Label(new Rect(padding, y, contentWidth, descHeight), currentNode.Def.description);
-                    y += descHeight + 12;
-                }
-
-                // 비용 및 진행률 — 바닐라 동일하게 CostApparent(테크레벨 차이 계수 반영) 표시.
-                // 조금이라도 진행됐으면 "123 / 700" 형식 (바닐라 연구 목록과 동일 표기)
-                Rect costRect = new Rect(padding, y, contentWidth, 22);
-                using (Temporary.Font(GameFont.Small))
-                {
-                    string costText = !currentNode.Def.IsFinished && currentNode.Progress > 0f
-                        ? "YART_CostProgress".Translate(currentNode.Def.ProgressApparentString, currentNode.Def.CostApparent.ToString("F0"))
-                        : "YART_Cost".Translate(currentNode.Def.CostApparent.ToString("N0"));
-                    Widgets.Label(costRect, costText);
-                }
-                y += 28;
-
-                // 테크레벨 차이로 비용이 부풀려진 경우 경고 (바닐라 번역 키 재사용)
-                float costFactor = currentNode.Def.CostFactor(Faction.OfPlayer.def.techLevel);
-                if (costFactor != 1f && !currentNode.Def.IsFinished)
-                {
-                    string costWarn = "TechLevelTooLow".Translate(Faction.OfPlayer.def.techLevel.ToStringHuman(),
-                        currentNode.Def.techLevel.ToStringHuman(), (1f / costFactor).ToStringPercent())
-                        + " " + "ResearchCostComparison".Translate(
-                            currentNode.Def.Cost.ToString("F0"), currentNode.Def.CostApparent.ToString("F0"));
-                    using (Temporary.Font(GameFont.Tiny))
-                    using (Temporary.Color(new Color(0.95f, 0.8f, 0.35f)))
-                    {
-                        float warnHeight = Text.CalcHeight(costWarn, contentWidth);
-                        Widgets.Label(new Rect(padding, y, contentWidth, warnHeight), costWarn);
-                        y += warnHeight + 6;
-                    }
-                }
-
-                // 요구 작업대/시설 (완료 전 상시 표시 — 어떤 건물이 필요한지 계획에 필요)
-                y += DrawRequirementsSection(currentNode, padding, y, contentWidth);
-
-                // Medieval Overhaul의 Schematic
-                y += DrawSchematicSection(currentNode, padding, y, contentWidth);
-
-                // 잠금 사유 (Locked일 때만; 선행 미완료는 큐로 해결되므로 사유에 포함되지 않음)
-                if (currentNode.State == ResearchNodeState.Locked)
-                {
-                    currentNode.GetLockedReasons(lockedReasonsBuffer);
-                    if (lockedReasonsBuffer.Count > 0)
-                    {
-                        using (Temporary.Font(GameFont.Small))
-                        using (Temporary.Color(new Color(0.95f, 0.5f, 0.45f)))
-                        {
-                            Widgets.Label(new Rect(padding, y, contentWidth, 22), "YART_LockedReasons".Translate());
-                            y += 22;
-                            foreach (var reason in lockedReasonsBuffer)
-                            {
-                                string line = "  • " + reason;
-                                float lineHeight = Text.CalcHeight(line, contentWidth);
-                                Widgets.Label(new Rect(padding, y, contentWidth, lineHeight), line);
-                                y += lineHeight + 2;
-                            }
-                        }
-                        y += 8;
-                    }
-                }
-
-                // 청사진 구입처 보충
-                if (currentNode.Def.TechprintCount > 0 && !currentNode.Def.TechprintRequirementMet)
-                {
-                    y += DrawTechprintSourcesSection(currentNode.Def, padding, y, contentWidth);
-
-                    if (Prefs.DevMode)
-                    {
-                        if (DrawPanelButton(new Rect(padding, y, contentWidth, 26), "Dev: Apply techprint",
-                                new Color(0.85f, 0.5f, 0.3f), enabled: true))
-                        {
-                            Find.ResearchManager.ApplyTechprint(currentNode.Def, null);
-                            SoundDefOf.TechprintApplied.PlayOneShotOnCamera();
-                            ResearchNode.InvalidateAllStates();
-                        }
-                        y += 30;
-                    }
-                    y += 4;
-                }
-
-                // 연구/큐 버튼 (상태에 따라 1~2개)
-                y += DrawResearchActionButtons(currentNode, padding, y, contentWidth);
-
-                // Divider
-                DrawSectionDivider(new Rect(padding, y, contentWidth, 1));
-                y += 12;
-
-                // Unlocked Content (New Section)
-                var unlockedDefs = currentNode.UnlockedDefs;
-                Rect unlockedHeaderRect = new Rect(padding, y, contentWidth, 25);
-                // 연구 보상
-                y += DrawSectionHeader(unlockedHeaderRect, "Unlocks".Translate(), unlockedDefs.Count, Constraints.SectionUnlocks);
-
-                // 2-column(아이콘+라벨) 토글 버튼 — 카운트 배지(우측 24px) 왼쪽에. 항목이 있을 때만.
-                if (unlockedDefs.Count > 0)
-                {
-                    bool expanded = YARTMod.Settings.unlockedContentExpanded;
-                    Rect toggleRect = new Rect(unlockedHeaderRect.xMax - 24f - 4f - 18f, unlockedHeaderRect.y + 2f, 18f, 18f);
-                    if (Mouse.IsOver(toggleRect)) Widgets.DrawHighlight(toggleRect);
-                    GUIDrawingUtilities.DrawIcon(toggleRect, Assets.IconSwap,
-                        expanded ? Constraints.SectionUnlocks : Constraints.ToggleInactive);
-                    TooltipHandler.TipRegion(toggleRect, "YART_ToggleUnlockedView".Translate());
-                    if (Widgets.ButtonInvisible(toggleRect))
-                    {
-                        SoundDefOf.Click.PlayOneShotOnCamera();
-                        YARTMod.Settings.unlockedContentExpanded = !expanded;
-                        YARTMod.Settings.Write();
-                    }
-                }
-
-                if (unlockedDefs.Count == 0)
-                {
-                    using (Temporary.Color(Constraints.MutedText))
-                    using (Temporary.Font(GameFont.Small))
-                    {
-                        Widgets.Label(new Rect(padding + 8, y, contentWidth, 22), "YART_None".Translate());
-                    }
-                    y += 26;
-                }
-                else
-                {
-                    y = UnlockedDefsUtility.Draw(padding, y, contentWidth,
-                        currentNode.UnlockedDefsGrouped, YARTMod.Settings.unlockedContentExpanded, 32f,
-                        NavigateToResearchDef);
-                }
-                y += 8;
-
-                // Divider
-                DrawSectionDivider(new Rect(padding, y, contentWidth, 1));
-                y += 12;
-
-                // 선행 연구 (Prerequisites)
-                var prereqs = currentNode.PanelPrerequisites ?? emptyNodeList;
-                y += DrawSectionHeader(new Rect(padding, y, contentWidth, 25), "YART_Prerequisites".Translate(), prereqs.Count, Constraints.SectionPrerequisites);
-
-                if (prereqs.Count == 0)
-                {
-                    using (Temporary.Color(Constraints.MutedText))
-                    using (Temporary.Font(GameFont.Small))
-                    {
-                        Widgets.Label(new Rect(padding + 8, y, contentWidth, 22), "YART_None".Translate());
-                    }
-                    y += 26;
-                }
-                else
-                {
-                    foreach (var prereq in prereqs)
-                    {
-                        y += DrawResearchCard(new Rect(padding, y, contentWidth, 36), prereq);
-                    }
-                }
-                y += 8;
-
-                // Divider
-                DrawSectionDivider(new Rect(padding, y, contentWidth, 1));
-                y += 12;
-
-                // 후행 연구 (Unlocks)
-                var children = currentNode.PanelChildren ?? emptyNodeList;
-                y += DrawSectionHeader(new Rect(padding, y, contentWidth, 25), "YART_Unlocks".Translate(), children.Count, Constraints.SectionFollowups);
-
-                if (children.Count == 0)
-                {
-                    using (Temporary.Color(Constraints.MutedText))
-                    using (Temporary.Font(GameFont.Small))
-                    {
-                        Widgets.Label(new Rect(padding + 8, y, contentWidth, 22), "YART_None".Translate());
-                    }
-                    y += 26;
-                }
-                else
-                {
-                    foreach (var child in children)
-                    {
-                        y += DrawResearchCard(new Rect(padding, y, contentWidth, 36), child);
-                    }
-                }
-
-                Widgets.EndScrollView();
+                history.Clear();
+                return false;
             }
+            btnX -= btnSize + gap;
+
+            if (DrawNavButton(new Rect(btnX, btnY, btnSize, btnSize), ">", history.CanRedo))
+            {
+                history.Redo();
+                leftPanelScrollPosition = Vector2.zero;
+                currentNode = history.Current;
+                NavigateToHistoryNode(currentNode);
+            }
+            btnX -= btnSize + gap;
+
+            if (DrawNavButton(new Rect(btnX, btnY, btnSize, btnSize), "<", history.CanUndo))
+            {
+                history.Undo();
+                leftPanelScrollPosition = Vector2.zero;
+                currentNode = history.Current;
+                NavigateToHistoryNode(currentNode);
+            }
+            btnX -= btnSize + gap;
+
+            // Info card (ⓘ) — 바닐라 위젯, 클릭 시 Dialog_InfoCard를 스스로 연다
+            Widgets.InfoCardButton(new Rect(btnX, btnY, btnSize, btnSize), currentNode.Def);
+            return true;
+        }
+
+        private float GetCachedPanelHeight(ResearchNode node, float contentWidth)
+        {
+            if (panelHeightCacheNode != node || panelHeightCacheWidth != contentWidth
+                || Time.realtimeSinceStartup - panelHeightCacheTime > 0.5f)
+            {
+                panelHeightCacheValue = CalculateLeftPanelHeight(node, contentWidth);
+                panelHeightCacheNode = node;
+                panelHeightCacheWidth = contentWidth;
+                panelHeightCacheTime = Time.realtimeSinceStartup;
+            }
+            return panelHeightCacheValue;
+        }
+
+        /// <summary>스크롤 뷰 안의 본문. 각 구역은 소비한 높이를 반환하므로 y 누적 순서가 곧 배치 순서다.</summary>
+        private void DrawPanelBody(ResearchNode node, Color eraColor, float contentWidth)
+        {
+            const float padding = PanelPadding;
+            float y = 0f;
+
+            y += DrawPanelTitle(node, eraColor, padding, y, contentWidth);
+            y += DrawTechLevelBadge(node, eraColor, padding, y);
+            y += DrawPanelDescription(node, padding, y, contentWidth);
+            y += DrawPanelCost(node, padding, y, contentWidth);
+            y += DrawCostFactorWarning(node.Def, padding, y, contentWidth);
+
+            // 요구 작업대/시설 (완료 전 상시 표시 — 어떤 건물이 필요한지 계획에 필요)
+            y += DrawRequirementsSection(node, padding, y, contentWidth);
+            // Medieval Overhaul의 Schematic
+            y += DrawSchematicSection(node, padding, y, contentWidth);
+            // 선행 미완료는 큐로 해결되므로 사유에 포함되지 않는다
+            y += DrawLockedReasonsSection(node, padding, y, contentWidth);
+            y += DrawTechprintBlock(node, padding, y, contentWidth);
+            y += DrawResearchActionButtons(node, padding, y, contentWidth);
+
+            y += DrawDivider(padding, y, contentWidth);
+            y += DrawUnlockedContentSection(node, padding, y, contentWidth);
+            y += 8;
+
+            y += DrawDivider(padding, y, contentWidth);
+            y += DrawNodeCardSection("YART_Prerequisites".Translate(), node.PanelPrerequisites ?? emptyNodeList,
+                Constraints.SectionPrerequisites, padding, y, contentWidth);
+            y += 8;
+
+            y += DrawDivider(padding, y, contentWidth);
+            DrawNodeCardSection("YART_Unlocks".Translate(), node.PanelChildren ?? emptyNodeList,
+                Constraints.SectionFollowups, padding, y, contentWidth);
+        }
+
+        /// <summary>연구 제목(시대 색) + 우측 출처 모드/DLC 아이콘.</summary>
+        private float DrawPanelTitle(ResearchNode node, Color eraColor, float padding, float y, float contentWidth)
+        {
+            const float iconSz = 24f;
+            var titleIcon = node.IsHidden ? null : GetModIcon(node.SourceMod);
+            float titleW = contentWidth - (titleIcon != null ? iconSz + 6f : 0f);
+
+            using (Temporary.Font(GameFont.Medium))
+            using (Temporary.Anchor(TextAnchor.UpperLeft))
+            using (Temporary.Color(eraColor))
+            {
+                Widgets.Label(new Rect(padding, y, titleW, 30), node.Label);
+            }
+
+            if (titleIcon != null)
+            {
+                Rect iconRect = new Rect(padding + contentWidth - iconSz, y + 3f, iconSz, iconSz);
+                var prevColor = GUI.color;
+                GUI.color = Color.white;
+                GUI.DrawTexture(iconRect, titleIcon, ScaleMode.ScaleToFit);
+                GUI.color = prevColor;
+                if (Mouse.IsOver(iconRect) && node.SourceMod != null)
+                {
+                    TooltipHandler.TipRegion(iconRect, node.SourceMod.Name);
+                }
+            }
+            return 32f;
+        }
+
+        private float DrawTechLevelBadge(ResearchNode node, Color eraColor, float padding, float y)
+        {
+            Rect badgeRect = new Rect(padding, y, 80, 20);
+            Widgets.DrawBoxSolid(badgeRect, GenColor.WithAlpha(eraColor, 0.3f));
+            GUIDrawingUtilities.DrawBorderLines(badgeRect, GenColor.WithAlpha(eraColor, 0.6f), 1f);
+            using (Temporary.Font(GameFont.Tiny))
+            using (Temporary.Anchor(TextAnchor.MiddleCenter))
+            {
+                Widgets.Label(badgeRect, TechLevelLabel(node.TechLevel));
+            }
+            return 28f;
+        }
+
+        private float DrawPanelDescription(ResearchNode node, float padding, float y, float contentWidth)
+        {
+            using (Temporary.Font(GameFont.Small))
+            using (Temporary.Color(new Color(0.8f, 0.8f, 0.85f)))
+            {
+                float descHeight = Text.CalcHeight(node.Def.description, contentWidth);
+                Widgets.Label(new Rect(padding, y, contentWidth, descHeight), node.Def.description);
+                return descHeight + 12;
+            }
+        }
+
+        /// <summary>비용/진행률 — 바닐라와 동일하게 CostApparent(테크레벨 계수 반영). 진행 중이면 "123 / 700".</summary>
+        private float DrawPanelCost(ResearchNode node, float padding, float y, float contentWidth)
+        {
+            using (Temporary.Font(GameFont.Small))
+            {
+                string costText = !node.Def.IsFinished && node.Progress > 0f
+                    ? "YART_CostProgress".Translate(node.Def.ProgressApparentString, node.Def.CostApparent.ToString("F0"))
+                    : "YART_Cost".Translate(node.Def.CostApparent.ToString("N0"));
+                Widgets.Label(new Rect(padding, y, contentWidth, 22), costText);
+            }
+            return 28f;
+        }
+
+        /// <summary>테크레벨 차이로 비용이 부풀려진 경우의 경고 문구 (해당 없으면 null). 바닐라 번역 키 재사용.</summary>
+        private static string CostFactorWarningText(ResearchProjectDef def)
+        {
+            if (def.IsFinished) return null;
+            float costFactor = def.CostFactor(Faction.OfPlayer.def.techLevel);
+            if (costFactor == 1f) return null;
+
+            return "TechLevelTooLow".Translate(Faction.OfPlayer.def.techLevel.ToStringHuman(),
+                       def.techLevel.ToStringHuman(), (1f / costFactor).ToStringPercent())
+                   + " " + "ResearchCostComparison".Translate(
+                       def.Cost.ToString("F0"), def.CostApparent.ToString("F0"));
+        }
+
+        private float DrawCostFactorWarning(ResearchProjectDef def, float padding, float y, float contentWidth)
+        {
+            string costWarn = CostFactorWarningText(def);
+            if (costWarn == null) return 0f;
+
+            using (Temporary.Font(GameFont.Tiny))
+            using (Temporary.Color(new Color(0.95f, 0.8f, 0.35f)))
+            {
+                float warnHeight = Text.CalcHeight(costWarn, contentWidth);
+                Widgets.Label(new Rect(padding, y, contentWidth, warnHeight), costWarn);
+                return warnHeight + 6;
+            }
+        }
+
+        private float DrawLockedReasonsSection(ResearchNode node, float padding, float y, float contentWidth)
+        {
+            if (node.State != ResearchNodeState.Locked) return 0f;
+            node.GetLockedReasons(lockedReasonsBuffer);
+            if (lockedReasonsBuffer.Count == 0) return 0f;
+
+            float startY = y;
+            using (Temporary.Font(GameFont.Small))
+            using (Temporary.Color(new Color(0.95f, 0.5f, 0.45f)))
+            {
+                Widgets.Label(new Rect(padding, y, contentWidth, 22), "YART_LockedReasons".Translate());
+                y += 22;
+                foreach (var reason in lockedReasonsBuffer)
+                {
+                    string line = "  • " + reason;
+                    float lineHeight = Text.CalcHeight(line, contentWidth);
+                    Widgets.Label(new Rect(padding, y, contentWidth, lineHeight), line);
+                    y += lineHeight + 2;
+                }
+            }
+            return (y - startY) + 8;
+        }
+
+        /// <summary>청사진 미충족 시 구입처 목록 + (개발 모드) 즉시 적용 버튼.</summary>
+        private float DrawTechprintBlock(ResearchNode node, float padding, float y, float contentWidth)
+        {
+            var def = node.Def;
+            if (def.TechprintCount <= 0 || def.TechprintRequirementMet) return 0f;
+
+            float startY = y;
+            y += DrawTechprintSourcesSection(def, padding, y, contentWidth);
+
+            if (Prefs.DevMode)
+            {
+                if (DrawPanelButton(new Rect(padding, y, contentWidth, 26), "Dev: Apply techprint",
+                        new Color(0.85f, 0.5f, 0.3f), enabled: true))
+                {
+                    Find.ResearchManager.ApplyTechprint(def, null);
+                    SoundDefOf.TechprintApplied.PlayOneShotOnCamera();
+                    ResearchNode.InvalidateAllStates();
+                }
+                y += 30;
+            }
+            return (y - startY) + 4;
+        }
+
+        private float DrawUnlockedContentSection(ResearchNode node, float padding, float y, float contentWidth)
+        {
+            float startY = y;
+            var unlockedDefs = node.UnlockedDefs;
+            Rect headerRect = new Rect(padding, y, contentWidth, 25);
+            y += DrawSectionHeader(headerRect, "Unlocks".Translate(), unlockedDefs.Count, Constraints.SectionUnlocks);
+
+            // 2-column(아이콘+라벨) 토글 — 카운트 배지(우측 24px) 왼쪽에. 항목이 있을 때만.
+            if (unlockedDefs.Count > 0)
+            {
+                DrawUnlockedViewToggle(new Rect(headerRect.xMax - 24f - 4f - 18f, headerRect.y + 2f, 18f, 18f));
+            }
+
+            if (unlockedDefs.Count == 0)
+            {
+                y += DrawNonePlaceholder(padding, y, contentWidth);
+            }
+            else
+            {
+                y = UnlockedDefsUtility.Draw(padding, y, contentWidth,
+                    node.UnlockedDefsGrouped, YARTMod.Settings.unlockedContentExpanded, 32f,
+                    NavigateToResearchDef);
+            }
+            return y - startY;
+        }
+
+        private void DrawUnlockedViewToggle(Rect toggleRect)
+        {
+            bool expanded = YARTMod.Settings.unlockedContentExpanded;
+            if (Mouse.IsOver(toggleRect)) Widgets.DrawHighlight(toggleRect);
+            GUIDrawingUtilities.DrawIcon(toggleRect, Assets.IconSwap,
+                expanded ? Constraints.SectionUnlocks : Constraints.ToggleInactive);
+            TooltipHandler.TipRegion(toggleRect, "YART_ToggleUnlockedView".Translate());
+            if (Widgets.ButtonInvisible(toggleRect))
+            {
+                SoundDefOf.Click.PlayOneShotOnCamera();
+                YARTMod.Settings.unlockedContentExpanded = !expanded;
+                YARTMod.Settings.Write();
+            }
+        }
+
+        /// <summary>헤더 + 연구 카드 목록 (선행/후행 공용). 비어 있으면 "없음" 한 줄.</summary>
+        private float DrawNodeCardSection(string title, List<ResearchNode> nodes, Color accentColor,
+            float padding, float y, float contentWidth)
+        {
+            float startY = y;
+            y += DrawSectionHeader(new Rect(padding, y, contentWidth, 25), title, nodes.Count, accentColor);
+
+            if (nodes.Count == 0)
+            {
+                y += DrawNonePlaceholder(padding, y, contentWidth);
+            }
+            else
+            {
+                foreach (var n in nodes)
+                {
+                    y += DrawResearchCard(new Rect(padding, y, contentWidth, 36), n);
+                }
+            }
+            return y - startY;
+        }
+
+        /// <summary>빈 섹션의 "없음" 한 줄. 반환값 = 소비 높이.</summary>
+        private static float DrawNonePlaceholder(float padding, float y, float contentWidth)
+        {
+            using (Temporary.Color(Constraints.MutedText))
+            using (Temporary.Font(GameFont.Small))
+            {
+                Widgets.Label(new Rect(padding + 8, y, contentWidth, 22), "YART_None".Translate());
+            }
+            return 26f;
+        }
+
+        /// <summary>구분선 한 줄. 반환값 = 소비 높이.</summary>
+        private float DrawDivider(float padding, float y, float contentWidth)
+        {
+            DrawSectionDivider(new Rect(padding, y, contentWidth, 1));
+            return 12f;
         }
 
         private void NavigateToResearchDef(ResearchProjectDef def)
@@ -346,13 +375,12 @@ namespace YART
         /// <summary>
         /// 이력 내비게이션 공용: 노드가 다른 그래프 소속이면 전환 후 포커스.
         /// JumpToNode와 달리 history는 건드리지 않는다 (이력 이동 중이므로).
+        /// 항목은 현재 뷰 기준으로 재해석한다 — 통합/탭 뷰를 전환한 뒤에도 현재 뷰에 머무르고,
+        /// 현재 그래프에 그 def가 없을 때만 원래 그래프로 전환한다.
         /// </summary>
         private void NavigateToHistoryNode(ResearchNode node)
         {
             if (node == null) return;
-            // 히스토리 항목을 현재 뷰 기준으로 해석한다 — 통합/탭 뷰를 전환한 뒤에도 현재 뷰에 머무른다.
-            // (통합 뷰에서 쌓인 복사본 항목을 탭 뷰로 되돌린 뒤 내비게이션해도 통합으로 재진입하지 않고,
-            //  현재 그래프에 그 def가 없을 때만 원래 그래프로 전환한다.)
             var resolved = GetNodeOnCurrentGraph(node.Def) ?? node;
             if (!resolved.Key.Equals(CurrentKey))
             {
@@ -439,7 +467,6 @@ namespace YART
             return rowHeight;
         }
 
-
         private static void EnqueueByModifier(ResearchQueueManager mgr, ResearchProjectDef def)
         {
             if (mgr == null) return;
@@ -474,9 +501,7 @@ namespace YART
             return enabled && Widgets.ButtonInvisible(rect);
         }
 
-        /// <summary>
-        /// 연구를 즉시 시작합니다. 큐 매니저를 통해 큐 머리로 올린 뒤 바닐라 API로 시작.
-        /// </summary>
+        /// <summary>연구를 즉시 시작합니다. 큐 매니저를 통해 큐 머리로 올린 뒤 바닐라 API로 시작.</summary>
         private void StartResearch(ResearchProjectDef project)
         {
             var queueMgr = ResearchQueueManager.Instance;
@@ -493,9 +518,7 @@ namespace YART
             ResearchNode.InvalidateAllStates();
         }
 
-        /// <summary>
-        /// Draws a navigation button with glassmorphism style.
-        /// </summary>
+        /// <summary>글래스모피즘 스타일 내비게이션 버튼. 클릭 시 Click 사운드를 자체 재생한다.</summary>
         private bool DrawNavButton(Rect rect, string label, bool enabled)
         {
             Color bgColor = enabled ? new Color(0.15f, 0.18f, 0.25f, 0.9f) : new Color(0.1f, 0.1f, 0.12f, 0.5f);
@@ -521,9 +544,7 @@ namespace YART
             return clicked;
         }
 
-        /// <summary>
-        /// Draws a section header with count badge.
-        /// </summary>
+        /// <summary>섹션 헤더 + 우측 카운트 배지. 반환값 = 소비 높이.</summary>
         private float DrawSectionHeader(Rect rect, string title, int count, Color accentColor)
         {
             using (Temporary.Font(GameFont.Small))
@@ -532,7 +553,6 @@ namespace YART
                 Widgets.Label(rect, title);
             }
 
-            // Count badge (우측 끝 정렬)
             Rect countRect = new Rect(rect.xMax - 24, rect.y + 2, 24, 18);
             Widgets.DrawBoxSolid(countRect, GenColor.WithAlpha(accentColor, 0.2f));
             using (Temporary.Font(GameFont.Tiny))
@@ -544,17 +564,12 @@ namespace YART
             return rect.height + 4;
         }
 
-        /// <summary>
-        /// Draws a section divider line.
-        /// </summary>
         private void DrawSectionDivider(Rect rect)
         {
             Widgets.DrawBoxSolid(rect, new Color(0.2f, 0.25f, 0.35f, 0.5f));
         }
 
-        /// <summary>
-        /// Draws a research item as a card with icon area and era accent.
-        /// </summary>
+        /// <summary>연구 한 건을 카드로 (상태 아이콘 + 라벨 + 클릭 점프). 반환값 = 카드 높이 + 간격.</summary>
         private float DrawResearchCard(Rect rect, ResearchNode node)
         {
             Color eraColor = node.EraAccentColor;
@@ -578,21 +593,16 @@ namespace YART
                     break;
             }
 
-            // Card background
             Widgets.DrawBoxSolid(rect, bgColor);
 
-            // Hover effect
             bool isHovered = Mouse.IsOver(rect);
             if (isHovered)
             {
                 Widgets.DrawHighlight(rect);
             }
 
-            // Status icon area (left)
-            float iconSize = 20f;
+            const float iconSize = 20f;
             Rect iconRect = new Rect(rect.x + 8, rect.center.y - iconSize / 2, iconSize, iconSize);
-
-            // Draw status indicator
             switch (node.State)
             {
                 case ResearchNodeState.Completed:
@@ -610,7 +620,6 @@ namespace YART
                     break;
             }
 
-            // Research name
             Rect labelRect = new Rect(rect.x + 34, rect.y, rect.width - 40, rect.height);
             using (Temporary.Font(GameFont.Small))
             using (Temporary.Anchor(TextAnchor.MiddleLeft))
@@ -619,13 +628,12 @@ namespace YART
                 Widgets.Label(labelRect, node.Label);
             }
 
-            // Tooltip (미발견 연구는 설명 마스킹)
+            // 미발견 연구는 설명 마스킹 + 선택/점프 불가
             if (isHovered && !node.IsHidden)
             {
                 TooltipHandler.TipRegion(rect, node.Def.description);
             }
 
-            // Click event (미발견 연구는 선택/점프 불가)
             if (Widgets.ButtonInvisible(rect) && !node.IsHidden)
             {
                 SoundDefOf.Click.PlayOneShotOnCamera();
@@ -635,7 +643,6 @@ namespace YART
                     leftPanelScrollPosition = Vector2.zero;
                 }
 
-                // 다른 그래프의 연구면 해당 그래프로 전환 후 포커스
                 if (!node.Key.Equals(CurrentKey))
                 {
                     SwitchGraph(node.Key, playSound: false); // 카드 클릭 Click으로 통일
@@ -663,17 +670,9 @@ namespace YART
 
             float startY = y;
             bool met = def.PlayerHasAnyAppropriateResearchBench;
-            Color statusColor = met ? new Color(0.6f, 1f, 0.6f) : new Color(0.95f, 0.8f, 0.35f);
+            Color statusColor = RequirementStatusColor(met);
 
-            // 헤더 + 상태 아이콘(체크/잠금)
-            using (Temporary.Font(GameFont.Small))
-            using (Temporary.Color(new Color(0.7f, 0.78f, 0.9f)))
-            {
-                Widgets.Label(new Rect(padding, y, contentWidth - 20f, 22), "YART_Requires".Translate());
-            }
-            GUIDrawingUtilities.DrawIcon(new Rect(padding + contentWidth - 18f, y + 3f, 14f, 14f),
-                met ? Assets.IconCheck : Assets.IconLock, statusColor);
-            y += 24f;
+            y += DrawRequirementHeader(padding, y, contentWidth, "YART_Requires".Translate(), met, statusColor);
 
             if (bench != null)
             {
@@ -688,6 +687,22 @@ namespace YART
             }
             y += 6f;
             return y - startY;
+        }
+
+        private static Color RequirementStatusColor(bool met) =>
+            met ? new Color(0.6f, 1f, 0.6f) : new Color(0.95f, 0.8f, 0.35f);
+
+        /// <summary>요구 섹션 헤더 + 우측 상태 아이콘(체크/잠금). 반환값 = 소비 높이.</summary>
+        private static float DrawRequirementHeader(float padding, float y, float contentWidth, string label, bool met, Color statusColor)
+        {
+            using (Temporary.Font(GameFont.Small))
+            using (Temporary.Color(new Color(0.7f, 0.78f, 0.9f)))
+            {
+                Widgets.Label(new Rect(padding, y, contentWidth - 20f, 22), label);
+            }
+            GUIDrawingUtilities.DrawIcon(new Rect(padding + contentWidth - 18f, y + 3f, 14f, 14f),
+                met ? Assets.IconCheck : Assets.IconLock, statusColor);
+            return 24f;
         }
 
         /// <summary>요구 작업대/시설 한 항목 (아이콘 + 라벨 + InfoCard 클릭). 반환값 = 행 높이+간격.</summary>
@@ -732,6 +747,7 @@ namespace YART
             return 24f + rows * 32f + 6f; // 헤더 + 행(28+4) + 하단 여백
         }
 
+        /// <summary>Medieval Overhaul 도식 요구 — DrawRequirementsSection과 동일 스타일의 1행 섹션.</summary>
         private float DrawSchematicSection(ResearchNode node, float padding, float y, float contentWidth)
         {
             var def = node.Def;
@@ -741,19 +757,10 @@ namespace YART
 
             float startY = y;
             bool met = MedievalOverhaulCompat.SchematicRequirementMet(def);
-            Color statusColor = met ? new Color(0.6f, 1f, 0.6f) : new Color(0.95f, 0.8f, 0.35f);
+            Color statusColor = RequirementStatusColor(met);
 
-            // 헤더 + 상태 아이콘(체크/잠금) — DrawRequirementsSection과 동일 스타일
-            using (Temporary.Font(GameFont.Small))
-            using (Temporary.Color(new Color(0.7f, 0.78f, 0.9f)))
-            {
-                Widgets.Label(new Rect(padding, y, contentWidth - 20f, 22),
-                    "DankPyon_RequiredSchematic".Translate() + ":");
-            }
-            GUIDrawingUtilities.DrawIcon(new Rect(padding + contentWidth - 18f, y + 3f, 14f, 14f),
-                met ? Assets.IconCheck : Assets.IconLock, statusColor);
-            y += 24f;
-
+            y += DrawRequirementHeader(padding, y, contentWidth,
+                "DankPyon_RequiredSchematic".Translate() + ":", met, statusColor);
             y += DrawRequirementRow(new Rect(padding, y, contentWidth, 28f), schematic, statusColor);
             y += 6f;
             return y - startY;
@@ -817,48 +824,33 @@ namespace YART
         }
 
         /// <summary>
-        /// 좌측 패널의 전체 높이 계산 (스크롤용)
+        /// 좌측 패널의 전체 높이 계산 (스크롤용). DrawPanelBody의 각 구역과 1:1로 대응해야 한다.
         /// </summary>
         private float CalculateLeftPanelHeight(ResearchNode node, float contentWidth)
         {
-            float height = 0;
+            float height = 32   // 제목
+                         + 28;  // 테크레벨 배지
 
-            // 제목
-            height += 32;
-
-            // Tech Level Badge
-            height += 28;
-
-            // 설명
             using (Temporary.Font(GameFont.Small))
             {
                 height += Text.CalcHeight(node.Def.description, contentWidth) + 12;
             }
 
-            // 비용
-            height += 28;
+            height += 28; // 비용
 
-            // 비용 계수 경고 (DoLeftRect와 동일 조건/폭/폰트)
-            float costFactor = node.Def.CostFactor(Faction.OfPlayer.def.techLevel);
-            if (costFactor != 1f && !node.Def.IsFinished)
+            string costWarn = CostFactorWarningText(node.Def);
+            if (costWarn != null)
             {
-                string costWarn = "TechLevelTooLow".Translate(Faction.OfPlayer.def.techLevel.ToStringHuman(),
-                    node.Def.techLevel.ToStringHuman(), (1f / costFactor).ToStringPercent())
-                    + " " + "ResearchCostComparison".Translate(
-                        node.Def.Cost.ToString("F0"), node.Def.CostApparent.ToString("F0"));
                 using (Temporary.Font(GameFont.Tiny))
                 {
                     height += Text.CalcHeight(costWarn, contentWidth) + 6;
                 }
             }
 
-            // 요구 작업대/시설 (DrawRequirementsSection과 동일 위치/높이)
             height += MeasureRequirementsHeight(node);
-
-            // Medieval Overhaul 도식 (DrawSchematicSection과 동일 위치/높이)
             height += MeasureSchematicHeight(node);
 
-            // 잠금 사유 (DrawLeftPanel의 렌더링과 동일한 계산이어야 함)
+            // 잠금 사유 (DrawLockedReasonsSection과 동일 계산)
             if (node.State == ResearchNodeState.Locked)
             {
                 node.GetLockedReasons(lockedReasonsBuffer);
@@ -876,7 +868,7 @@ namespace YART
                 }
             }
 
-            // 테크프린트 구입처 보충 (DoLeftRect와 동일 조건/구성)
+            // 테크프린트 구입처 보충 (DrawTechprintBlock과 동일 조건/구성)
             if (node.Def.TechprintCount > 0 && !node.Def.TechprintRequirementMet)
             {
                 height += MeasureTechprintSourcesHeight(node.Def);
@@ -884,47 +876,29 @@ namespace YART
                 height += 4;
             }
 
-            // 연구 버튼
-            height += 45;
+            height += 45; // 연구 버튼
+            height += 12; // 구분선
 
-            // 구분선
-            height += 12;
-
-            // Unlocked Content
-            height += 29; // Header
-            if (node.UnlockedDefs.Count == 0)
-            {
-                height += 26;
-            }
-            else
-            {
-                height += UnlockedDefsUtility.Measure(contentWidth, node.UnlockedDefsGrouped,
+            // 해금 콘텐츠
+            height += 29; // 헤더
+            height += node.UnlockedDefs.Count == 0
+                ? 26
+                : UnlockedDefsUtility.Measure(contentWidth, node.UnlockedDefsGrouped,
                     YARTMod.Settings.unlockedContentExpanded, 32f);
-            }
             height += 8;
 
-            // 구분선
-            height += 12;
-
-            // 선행 연구 헤더
-            height += 29;
-
+            // 선행 연구
+            height += 12 + 29;
             var prereqs = node.PanelPrerequisites ?? emptyNodeList;
-            height += prereqs.Count > 0 ? prereqs.Count * 40 : 26;  // Card height is 36 + 4 spacing
+            height += prereqs.Count > 0 ? prereqs.Count * 40 : 26;
             height += 8;
 
-            // 구분선
-            height += 12;
-
-            // 후행 연구 헤더
-            height += 29;
-
+            // 후행 연구
+            height += 12 + 29;
             var children = node.PanelChildren ?? emptyNodeList;
             height += children.Count > 0 ? children.Count * 40 : 26;
 
-            // 여유 공간
-            height += 60;
-
+            height += 60; // 여유 공간
             return height;
         }
     }

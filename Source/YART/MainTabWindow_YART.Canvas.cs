@@ -16,31 +16,19 @@ namespace YART
     {
         private void DoGraphCanvas(Rect rect)
         {
-            // 포커스 카메라 애니메이션 진행 (입력/컬링 계산 전에 위치 갱신)
-            UpdateCameraAnimation();
+            UpdateCameraAnimation(); // 입력/컬링 계산 전에 카메라 위치 갱신
+            HandleKeyboardPan();     // WASD (마우스 위치 무관, 검색창 입력 중에는 무시)
+            HandleInput(rect);       // 줌/팬 — 패널 영역 제외
+            ClampScroll(rect);       // 그래프가 화면에서 완전히 벗어나지 않도록 (느슨하게)
 
-            // WASD 키보드 패닝 (마우스 위치 무관, 검색창 입력 중에는 무시)
-            HandleKeyboardPan();
-
-            // 이벤트 처리 (줌/팬) - 패널 영역 제외
-            HandleInput(rect);
-
-            // 스크롤(팬) 범위 제한 — 그래프가 화면에서 완전히 벗어나지 않도록 (느슨하게)
-            ClampScroll(rect);
-
-            // Culling 영역 계산
-            // World = (Screen - scroll) / zoom
+            // 컬링 영역: World = (Screen - scroll) / zoom, 여기에 여유 마진
             Vector2 minWorld = (Vector2.zero - scrollPosition) / zoomLevel;
             Vector2 maxWorld = (new Vector2(rect.width, rect.height) - scrollPosition) / zoomLevel;
-
-            // 화면 크기에 맞게 불필요한 렌더링을 최소화
             visibleRect = new Rect(minWorld.x - Constraints.CullingMargin.x, minWorld.y - Constraints.CullingMargin.y,
                 (maxWorld.x - minWorld.x) + (Constraints.CullingMargin.x * 2),
                 (maxWorld.y - minWorld.y) + (Constraints.CullingMargin.y * 2));
 
-            GLLineBatcher.ClipRect = rect;
-            GLSolidQuadBatcher.ClipRect = rect;
-            GLTexturedQuadBatcher.ClipRect = rect;
+            SetBatcherClipRect(rect);
 
             try
             {
@@ -66,11 +54,21 @@ namespace YART
             }
             finally
             {
-                // Reset Clipping Limit
-                GLLineBatcher.ClipRect = Rect.zero;
-                GLSolidQuadBatcher.ClipRect = Rect.zero;
-                GLTexturedQuadBatcher.ClipRect = Rect.zero;
+                SetBatcherClipRect(Rect.zero); // 클리핑 해제
             }
+        }
+
+        private static void SetBatcherClipRect(Rect rect)
+        {
+            GLLineBatcher.ClipRect = rect;
+            GLSolidQuadBatcher.ClipRect = rect;
+            GLTexturedQuadBatcher.ClipRect = rect;
+        }
+
+        private static List<KeyValuePair<TechLevel, float>> SortedEraBoundaries(ResearchSubGraph graph)
+        {
+            if (graph?.TechLevelBoundaries == null || graph.TechLevelBoundaries.Count == 0) return null;
+            return graph.TechLevelBoundaries.OrderBy(kvp => kvp.Value).ToList();
         }
 
         /// <summary>
@@ -82,75 +80,83 @@ namespace YART
             // 1. 베이스
             Widgets.DrawBoxSolid(rect, Constraints.BackgroundColor);
 
-            // 2. 시대 구역 틴트 (경계 x에서 시작해 오른쪽으로 페이드 아웃)
-            var graph = ResearchGraph.Instance.GetSubGraph(CurrentKey);
-            if (graph?.TechLevelBoundaries != null && graph.TechLevelBoundaries.Count > 0)
-            {
-                var boundaries = graph.TechLevelBoundaries.OrderBy(kvp => kvp.Value).ToList();
-                for (int i = 0; i < boundaries.Count; i++)
-                {
-                    float zoneStartWorld = boundaries[i].Value;
-                    // 마지막 구역은 스크롤과 무관하게 고정 폭으로 페이드 (팬 중 일렁임 방지)
-                    float zoneEndWorld = i + 1 < boundaries.Count
-                        ? boundaries[i + 1].Value
-                        : zoneStartWorld + Constraints.GridMajorSpacing * 8f;
-                    if (zoneEndWorld < visibleRect.xMin || zoneStartWorld > visibleRect.xMax) continue;
+            // 2. 시대 구역 틴트
+            DrawEraZoneTints(rect, offset, zoom);
 
-                    float x0 = (zoneStartWorld * zoom) + offset.x;
-                    float x1 = (zoneEndWorld * zoom) + offset.x;
-                    if (x1 <= x0) continue;
-
-                    Color era = ActiveColors.Era(boundaries[i].Key);
-                    GLSolidQuadBatcher.QueueGradientQuadH(
-                        new Rect(x0, rect.y, x1 - x0, rect.height),
-                        GenColor.WithAlpha(era, Constraints.EraZoneTintAlpha),
-                        GenColor.WithAlpha(era, 0f));
-                }
-                GLSolidQuadBatcher.Flush();
-            }
-
+            // 3. 그리드
             if (YARTMod.Settings.gridBackground)
             {
-                // 3. 그리드 (보조선은 저줌에서 페이드 아웃)
-                float minorAlpha = Mathf.InverseLerp(Constraints.GridMinorFadeOutZoom - 0.2f, Constraints.GridMinorFadeOutZoom, zoom);
-                if (minorAlpha > 0f)
-                {
-                    DrawGridLines(rect, offset, zoom, Constraints.GridMinorSpacing,
-                        GenColor.WithAlpha(Constraints.GridMinorColor, Constraints.GridMinorColor.a * minorAlpha), skipMajorPositions: true);
-                }
-                DrawGridLines(rect, offset, zoom, Constraints.GridMajorSpacing, Constraints.GridMajorColor, skipMajorPositions: false);
-                GLLineBatcher.Flush();
-
-                // 주선 교차점 도트 (글로우 스프라이트, 고줌에서만)
-                if (zoom >= 0.8f)
-                {
-                    float dotAlpha = Mathf.InverseLerp(0.8f, 1.1f, zoom);
-                    Color dotColor = GenColor.WithAlpha(Constraints.GridDotColor, Constraints.GridDotColor.a * dotAlpha);
-                    float size = Constraints.GridDotSize * zoom;
-                    float spacing = Constraints.GridMajorSpacing;
-                    float startX = Mathf.Floor(visibleRect.xMin / spacing) * spacing;
-                    float startY = Mathf.Floor(visibleRect.yMin / spacing) * spacing;
-                    for (float wx = startX; wx <= visibleRect.xMax; wx += spacing)
-                    {
-                        for (float wy = startY; wy <= visibleRect.yMax; wy += spacing)
-                        {
-                            float sx = (wx * zoom) + offset.x;
-                            float sy = (wy * zoom) + offset.y;
-                            GLTexturedQuadBatcher.QueueQuad(Assets.GlowRadial,
-                                new Rect(sx - size / 2f, sy - size / 2f, size, size), dotColor);
-                        }
-                    }
-                    GLTexturedQuadBatcher.Flush();
-                }
+                DrawGrid(rect, offset, zoom);
             }
 
-            // 4. 노이즈 그레인 (스크린 공간, 절반 속도 패럴랙스)
+            // 4. 노이즈 그레인
             using (Temporary.Color(new Color(1f, 1f, 1f, Constraints.NoiseAlpha)))
             {
                 float ts = Constraints.NoiseTileScreenSize;
                 Rect texCoords = new Rect(-offset.x * 0.5f / ts, offset.y * 0.5f / ts, rect.width / ts, rect.height / ts);
                 GUI.DrawTextureWithTexCoords(rect, Assets.NoiseTile, texCoords);
             }
+        }
+
+        /// <summary>시대 구역 틴트: 경계 x에서 시작해 오른쪽으로 페이드 아웃하는 가로 그라디언트.</summary>
+        private void DrawEraZoneTints(Rect rect, Vector2 offset, float zoom)
+        {
+            var boundaries = SortedEraBoundaries(ResearchGraph.Instance.GetSubGraph(CurrentKey));
+            if (boundaries == null) return;
+
+            for (int i = 0; i < boundaries.Count; i++)
+            {
+                float zoneStartWorld = boundaries[i].Value;
+                // 마지막 구역은 스크롤과 무관하게 고정 폭으로 페이드 (팬 중 일렁임 방지)
+                float zoneEndWorld = i + 1 < boundaries.Count
+                    ? boundaries[i + 1].Value
+                    : zoneStartWorld + Constraints.GridMajorSpacing * 8f;
+                if (zoneEndWorld < visibleRect.xMin || zoneStartWorld > visibleRect.xMax) continue;
+
+                float x0 = (zoneStartWorld * zoom) + offset.x;
+                float x1 = (zoneEndWorld * zoom) + offset.x;
+                if (x1 <= x0) continue;
+
+                Color era = ActiveColors.Era(boundaries[i].Key);
+                GLSolidQuadBatcher.QueueGradientQuadH(
+                    new Rect(x0, rect.y, x1 - x0, rect.height),
+                    GenColor.WithAlpha(era, Constraints.EraZoneTintAlpha),
+                    GenColor.WithAlpha(era, 0f));
+            }
+            GLSolidQuadBatcher.Flush();
+        }
+
+        /// <summary>2단 그리드 (보조선은 저줌에서 페이드 아웃) + 주선 교차점 도트.</summary>
+        private void DrawGrid(Rect rect, Vector2 offset, float zoom)
+        {
+            float minorAlpha = Mathf.InverseLerp(Constraints.GridMinorFadeOutZoom - 0.2f, Constraints.GridMinorFadeOutZoom, zoom);
+            if (minorAlpha > 0f)
+            {
+                DrawGridLines(rect, offset, zoom, Constraints.GridMinorSpacing,
+                    GenColor.WithAlpha(Constraints.GridMinorColor, Constraints.GridMinorColor.a * minorAlpha), skipMajorPositions: true);
+            }
+            DrawGridLines(rect, offset, zoom, Constraints.GridMajorSpacing, Constraints.GridMajorColor, skipMajorPositions: false);
+            GLLineBatcher.Flush();
+
+            if (zoom < 0.8f) return; // 도트는 고줌에서만
+
+            float dotAlpha = Mathf.InverseLerp(0.8f, 1.1f, zoom);
+            Color dotColor = GenColor.WithAlpha(Constraints.GridDotColor, Constraints.GridDotColor.a * dotAlpha);
+            float size = Constraints.GridDotSize * zoom;
+            float spacing = Constraints.GridMajorSpacing;
+            float startX = Mathf.Floor(visibleRect.xMin / spacing) * spacing;
+            float startY = Mathf.Floor(visibleRect.yMin / spacing) * spacing;
+            for (float wx = startX; wx <= visibleRect.xMax; wx += spacing)
+            {
+                for (float wy = startY; wy <= visibleRect.yMax; wy += spacing)
+                {
+                    float sx = (wx * zoom) + offset.x;
+                    float sy = (wy * zoom) + offset.y;
+                    GLTexturedQuadBatcher.QueueQuad(Assets.GlowRadial,
+                        new Rect(sx - size / 2f, sy - size / 2f, size, size), dotColor);
+                }
+            }
+            GLTexturedQuadBatcher.Flush();
         }
 
         private void DrawGridLines(Rect rect, Vector2 offset, float zoom, float spacingWorld, Color color, bool skipMajorPositions)
@@ -201,21 +207,12 @@ namespace YART
 
             // 호버 포커스(디밍) 갱신 — 렌더 직전
             UpdateFocusMode(graph, offset, zoom);
+            AdvanceFocusFade();
 
-            // 포커스 페이드값
-            float nowFade = Time.realtimeSinceStartup;
-            float fadeDt = lastFocusFadeTime > 0f ? Mathf.Min(nowFade - lastFocusFadeTime, 0.1f) : 0f;
-            lastFocusFadeTime = nowFade;
-            float focusTarget = hoveredNode != null ? 1f : 0f;
-            focusAmount = Mathf.MoveTowards(focusAmount, focusTarget, fadeDt / Constraints.FocusFadeDuration);
-
-            // TechLevel 구분선 그리기
             DrawTechLevelLines(graph, offset, zoom);
-
             BuildEraBands(graph);
 
-            // 1. 엣지 먼저 그리기 (노드 뒤에 가려지도록)
-            // graph.Edges 리스트를 직접 순회하여 O(E)로 최적화
+            // 1. 엣지 먼저 (노드 뒤에 가려지도록). graph.Edges 직접 순회로 O(E).
             PerfSec(0); // 엣지 큐 (CPU: 앵커/색/하이라이트/리본 지오메트리)
             foreach (var edge in graph.Edges)
             {
@@ -265,16 +262,23 @@ namespace YART
                 GUI.color = Color.white;
             }
 
-            // Flush any remaining batched lines (e.g., dummy node connectors queued in DrawNodeBackground)
+            // 남은 배치 라인 플러시 (DrawNodeBackground의 더미 커넥터 등)
             GLLineBatcher.Flush();
             PerfSecEnd();
         }
 
+        private void AdvanceFocusFade()
+        {
+            float now = Time.realtimeSinceStartup;
+            float dt = lastFocusFadeTime > 0f ? Mathf.Min(now - lastFocusFadeTime, 0.1f) : 0f;
+            lastFocusFadeTime = now;
+            focusAmount = Mathf.MoveTowards(focusAmount, hoveredNode != null ? 1f : 0f, dt / Constraints.FocusFadeDuration);
+        }
+
         private void DrawTechLevelLines(ResearchSubGraph graph, Vector2 offset, float zoom)
         {
-            if (graph.TechLevelBoundaries == null || graph.TechLevelBoundaries.Count == 0) return;
-
-            var boundaries = graph.TechLevelBoundaries.OrderBy(kvp => kvp.Value).ToList();
+            var boundaries = SortedEraBoundaries(graph);
+            if (boundaries == null) return;
 
             // 1. 경계선: X는 월드 좌표에 고정, 세로로는 줌/스크롤과 무관하게 항상 캔버스 전체를 채움
             foreach (var kvp in boundaries)
@@ -289,9 +293,6 @@ namespace YART
                     Constraints.TechLevelLineColor);
             }
 
-            // 2. 시대 라벨: 스크린 고정 높이(상단 큐 바/컨트롤 바로 아래)에 sticky로 항상 표시.
-            //    구역 시작선 오른쪽에 붙고, 시작선이 화면 왼쪽을 벗어나면 가장자리에 고정되며,
-            //    다음 시대 경계가 다가오면 밀려난다.
             float labelY = canvasRect.y + eraLabelTopOffset + Constraints.EraLabelTopMargin;
 
             using (Temporary.Anchor(TextAnchor.UpperLeft))
@@ -380,29 +381,9 @@ namespace YART
 
             Event e = Event.current;
 
-            // 줌 (휠)
             if (e.type == EventType.ScrollWheel)
             {
-                float zoomDelta = -e.delta.y * 0.05f;
-                float oldZoom = zoomLevel;
-                float newZoom = Mathf.Clamp(oldZoom + zoomDelta, Constraints.MinZoom, Constraints.MaxZoom);
-
-                if (Mathf.Abs(newZoom - oldZoom) > 0.001f)
-                {
-                    scrollAnimating = false; // 유저 줌 = 포커스 애니메이션 취소
-
-                    Vector2 mousePos = e.mousePosition;
-                    Vector2 mousePosRelative = mousePos - rect.position;
-
-                    // 현재 마우스 위치의 월드 좌표 계산
-                    Vector2 mouseWorldPos = (mousePosRelative - scrollPosition) / oldZoom;
-
-                    zoomLevel = newZoom;
-
-                    // 마우스 커서 중심 줌을 위한 스크롤 보정
-                    scrollPosition = mousePosRelative - (mouseWorldPos * newZoom);
-                }
-
+                HandleWheelZoom(e, rect);
                 e.Use();
             }
 
@@ -467,25 +448,36 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 지정된 노드를 화면 중앙에 위치시킵니다.
-        /// </summary>
-        /// <param name="node">포커스할 노드</param>
+        /// <summary>마우스 커서를 고정점으로 삼는 휠 줌.</summary>
+        private void HandleWheelZoom(Event e, Rect rect)
+        {
+            float oldZoom = zoomLevel;
+            float newZoom = Mathf.Clamp(oldZoom + (-e.delta.y * 0.05f), Constraints.MinZoom, Constraints.MaxZoom);
+            if (Mathf.Abs(newZoom - oldZoom) <= 0.001f) return;
+
+            scrollAnimating = false; // 유저 줌 = 포커스 애니메이션 취소
+
+            Vector2 mousePosRelative = e.mousePosition - rect.position;
+            Vector2 mouseWorldPos = (mousePosRelative - scrollPosition) / oldZoom;
+            zoomLevel = newZoom;
+            scrollPosition = mousePosRelative - (mouseWorldPos * newZoom); // 커서 아래 월드 좌표 유지
+        }
+
+        /// <summary>지정된 노드를 화면 중앙으로 (ease-out 애니메이션, 진행은 UpdateCameraAnimation).</summary>
         private void FocusOnNode(ResearchNode node)
         {
             if (node == null || node.IsDummy) return;
 
-            // 노드의 월드 좌표 중심
-            Vector2 nodeCenter = node.Center;
-
-            // 화면 중앙 좌표 (캔버스 기준)
+            // 화면중앙 = (노드월드좌표 * zoom) + scroll  ⇒  scroll = 화면중앙 - 노드월드좌표*zoom
             Vector2 screenCenter = new Vector2(canvasRect.width / 2f, canvasRect.height / 2f);
+            StartScrollAnimation(screenCenter - (node.Center * zoomLevel));
+        }
 
-            // scrollPosition 계산: 화면중앙 = (노드월드좌표 * zoom) + scrollPosition
-            // => scrollPosition = 화면중앙 - (노드월드좌표 * zoom)
-            // 순간이동 대신 ease-out 애니메이션 (진행은 UpdateCameraAnimation)
+        /// <summary>현재 위치에서 target까지 카메라 이동을 시작한다.</summary>
+        private void StartScrollAnimation(Vector2 target)
+        {
             scrollAnimStart = scrollPosition;
-            scrollAnimTarget = screenCenter - (nodeCenter * zoomLevel);
+            scrollAnimTarget = target;
             scrollAnimStartTime = Time.realtimeSinceStartup;
             scrollAnimating = true;
         }
@@ -552,10 +544,7 @@ namespace YART
             float fit = Mathf.Min(canvasRect.width / bb.width, canvasRect.height / bb.height);
             zoomLevel = Mathf.Clamp(fit, Constraints.MinZoom, Constraints.MaxZoom);
 
-            scrollAnimStart = scrollPosition;
-            scrollAnimTarget = new Vector2(canvasRect.width / 2f, canvasRect.height / 2f) - (bb.center * zoomLevel);
-            scrollAnimStartTime = Time.realtimeSinceStartup;
-            scrollAnimating = true;
+            StartScrollAnimation(new Vector2(canvasRect.width / 2f, canvasRect.height / 2f) - (bb.center * zoomLevel));
         }
 
         /// <summary>
@@ -564,7 +553,7 @@ namespace YART
         private void JumpToNode(ResearchNode node)
         {
             if (node == null || node.IsDummy) return;
-            var realNode = node.IsProxy ? node.OriginalNode : node;
+            var realNode = RealNodeOf(node);
             if (realNode.IsHidden) return; // 미발견 연구로는 점프 불가
 
             if (!realNode.Key.Equals(CurrentKey))

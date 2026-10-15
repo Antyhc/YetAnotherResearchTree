@@ -21,11 +21,14 @@ namespace YART.Rendering
                 Shader shader = Shader.Find("GUI/Text Shader") ?? Shader.Find("Hidden/Internal-Colored");
 
                 lineMaterial = new Material(shader);
+                // 1.7+: 항상 알파 블렌딩이라 의미 없음
+#if !RW17
                 lineMaterial.hideFlags = HideFlags.HideAndDontSave;
                 lineMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
                 lineMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
                 lineMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
                 lineMaterial.SetInt("_ZWrite", 0);
+#endif
             }
         }
 

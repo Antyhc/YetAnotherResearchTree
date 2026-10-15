@@ -41,6 +41,26 @@ namespace YART
         /// <summary>프리셋 에디터가 선택지로 보여줄 탭 목록 (드롭다운과 동일).</summary>
         public List<ResearchTabDef> SelectableTabsForPreset() => GetVisibleStandardTabs();
 
+        /// <summary>통합 벤치 서브그래프를 (필요하면 빌드해) 확보한다. 사용 가능하면 true.</summary>
+        private static bool EnsureUnifiedBenchGraph()
+        {
+            GraphBuildPipeline.EnsureBuilt();
+            ResearchGraph.Instance.GetOrBuildUnifiedBench();
+            return ResearchGraph.Instance.GetSubGraph(GraphKey.UnifiedBench) != null;
+        }
+
+        /// <summary>어두운 배경 + 테두리 + 호버 하이라이트의 정사각 아이콘 버튼. 클릭되면 true.</summary>
+        private static bool DrawIconButton(Rect rect, Texture2D icon, Color iconColor, float pad, string tooltip,
+            float bgAlpha = 0.45f)
+        {
+            Widgets.DrawBoxSolid(rect, new Color(0f, 0f, 0f, bgAlpha));
+            GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
+            if (Mouse.IsOver(rect)) Widgets.DrawHighlight(rect);
+            GUIDrawingUtilities.DrawIcon(rect.ContractedBy(pad), icon, iconColor);
+            TooltipHandler.TipRegion(rect, tooltip);
+            return Widgets.ButtonInvisible(rect);
+        }
+
         private Rect ComputeTopLeftControlsRect()
         {
             float row1 = 0f;
@@ -148,14 +168,11 @@ namespace YART
             }
         }
 
+        private static readonly Color HudIconColor = new Color(0.82f, 0.87f, 0.97f);
+
         private void DoVanillaSwitchButton(Rect rect)
         {
-            Widgets.DrawBoxSolid(rect, new Color(0f, 0f, 0f, 0.45f));
-            GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
-            if (Mouse.IsOver(rect)) Widgets.DrawHighlight(rect);
-            GUIDrawingUtilities.DrawIcon(rect.ContractedBy(4f), Assets.IconSwap, new Color(0.82f, 0.87f, 0.97f));
-            TooltipHandler.TipRegion(rect, "YART_SwitchToVanilla".Translate());
-            if (Widgets.ButtonInvisible(rect))
+            if (DrawIconButton(rect, Assets.IconSwap, HudIconColor, 4f, "YART_SwitchToVanilla".Translate()))
             {
                 VanillaTabReplacer.SwitchTo(useYart: false);
             }
@@ -163,28 +180,23 @@ namespace YART
 
         private void DoSettingsButton(Rect rect)
         {
-            Widgets.DrawBoxSolid(rect, new Color(0f, 0f, 0f, 0.45f));
-            GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
-            if (Mouse.IsOver(rect)) Widgets.DrawHighlight(rect);
-            GUIDrawingUtilities.DrawIcon(rect.ContractedBy(4f), Assets.IconSettings, new Color(0.82f, 0.87f, 0.97f));
-            TooltipHandler.TipRegion(rect, "YART_OpenSettings".Translate());
-            if (Widgets.ButtonInvisible(rect))
+            if (DrawIconButton(rect, Assets.IconSettings, HudIconColor, 4f, "YART_OpenSettings".Translate()))
             {
                 Find.WindowStack.Add(new Dialog_YARTSettings());
                 SoundDefOf.Click.PlayOneShotOnCamera();
             }
         }
 
+        private const float TrackChipPad = 6f;
+
         private void DrawTrackChip(Rect rect, ResearchChannel channel)
         {
             bool selected = channel == SelectedChannel;
             Color trackColor = channel.Color;
-            var queueMgr = ResearchQueueManager.Instance;
+            var queue = ResearchQueueManager.Instance?.GetQueue(channel);
             var current = ResearchQueueManager.GetCurrentProject(channel);
-            var queue = queueMgr?.GetQueue(channel);
             int queueCount = queue?.Count ?? 0;
 
-            // 배경/테두리
             Widgets.DrawBoxSolid(rect, selected ? GenColor.WithAlpha(trackColor, 0.15f) : new Color(0f, 0f, 0f, 0.4f));
             GUIDrawingUtilities.DrawBorderLines(rect, selected ? trackColor : Constraints.PanelBorder, selected ? 2f : 1f);
             if (!selected && Mouse.IsOver(rect))
@@ -192,40 +204,72 @@ namespace YART
                 Widgets.DrawHighlight(rect);
             }
 
-            float pad = 6f;
-
             // 1행: 채널명 (+ 큐 수) — 큐 배지가 있으면 nameRect 오른쪽을 줄여 겹침 방지
-            Rect nameRect = new Rect(rect.x + pad, rect.y + pad - 1f, rect.width - pad * 2 - (queueCount > 0 ? 30f : 0f), 18f);
+            Rect nameRect = new Rect(rect.x + TrackChipPad, rect.y + TrackChipPad - 1f,
+                rect.width - TrackChipPad * 2 - (queueCount > 0 ? 30f : 0f), 18f);
             using (Temporary.Font(GameFont.Tiny))
             using (Temporary.Color(GenColor.WithAlpha(trackColor, 0.9f)))
             {
                 Widgets.Label(nameRect, channel.Label);
             }
 
-            if (queueCount > 0)
+            if (queueCount > 0) DrawTrackChipQueuePill(rect, trackColor, queueCount);
+
+            string tooltip = DrawTrackChipStatusRow(rect, channel, current, queue);
+
+            // 진행바 (하단)
+            if (current != null)
             {
-                using (Temporary.Font(GameFont.Small))
-                {
-                    string countText = queueCount.ToString();
-                    Vector2 textSize = Text.CalcSize(countText);
-                    const float pillH = 18f;
-                    float pillW = Mathf.Max(pillH, textSize.x + 10f);
-                    Rect pillRect = new Rect(rect.xMax - pad - pillW, rect.y + pad - 1f, pillW, pillH);
-
-                    // 둥근 pill 배경 (GUI.DrawTexture의 borderRadius 오버로드 — 게임 동봉 Unity 모듈에서 시그니처 확인됨)
-                    GUI.DrawTexture(pillRect, BaseContent.WhiteTex, ScaleMode.StretchToFill, true, 0f,
-                        GenColor.WithAlpha(trackColor, 0.30f), 0f, pillH / 2f);
-
-                    using (Temporary.Anchor(TextAnchor.MiddleCenter))
-                    using (Temporary.Color(new Color(0.92f, 0.95f, 1f)))
-                    {
-                        Widgets.Label(pillRect, countText);
-                    }
-                }
+                Rect track = new Rect(rect.x + 1f, rect.yMax - 4f, rect.width - 2f, 3f);
+                Widgets.DrawBoxSolid(track, new Color(0f, 0f, 0f, 0.5f));
+                Widgets.DrawBoxSolid(
+                    new Rect(track.x, track.y, track.width * Mathf.Clamp01(current.ProgressPercent), track.height),
+                    trackColor);
             }
 
-            // 2행: 현재 프로젝트 또는 상태
-            Rect statusRect = new Rect(rect.x + pad, rect.y + 22f, rect.width - pad * 2, rect.height - 28f);
+            if (channel.Tooltip != null) tooltip = tooltip == null ? channel.Tooltip : tooltip + "\n\n" + channel.Tooltip;
+            if (tooltip != null) TooltipHandler.TipRegion(rect, tooltip);
+
+            // 프리셋 에디터가 열려 있는 동안에는 트랙(채널) 전환 금지 — 프리뷰 맥락 유지
+            if (!Widgets.ButtonInvisible(rect) || Find.WindowStack.IsOpen<Dialog_PresetEditor>()) return;
+
+            // 통합 뷰 ON + 벤치 칩 클릭 → 통합 키로 전환 (일반 탭 키로 돌아가지 않게).
+            if (YARTMod.Settings.unifiedBenchView && channel.IsBench && EnsureUnifiedBenchGraph())
+                SwitchGraph(GraphKey.UnifiedBench);
+            else
+                SwitchGraph(new GraphKey(channel, selectedTab));
+        }
+
+        /// <summary>칩 우상단의 둥근 큐 개수 배지.</summary>
+        private static void DrawTrackChipQueuePill(Rect rect, Color trackColor, int queueCount)
+        {
+            using (Temporary.Font(GameFont.Small))
+            {
+                string countText = queueCount.ToString();
+                const float pillH = 18f;
+                float pillW = Mathf.Max(pillH, Text.CalcSize(countText).x + 10f);
+                Rect pillRect = new Rect(rect.xMax - TrackChipPad - pillW, rect.y + TrackChipPad - 1f, pillW, pillH);
+
+                // 둥근 pill 배경 (GUI.DrawTexture의 borderRadius 오버로드 — 게임 동봉 Unity 모듈에서 시그니처 확인됨)
+                GUI.DrawTexture(pillRect, BaseContent.WhiteTex, ScaleMode.StretchToFill, true, 0f,
+                    GenColor.WithAlpha(trackColor, 0.30f), 0f, pillH / 2f);
+
+                using (Temporary.Anchor(TextAnchor.MiddleCenter))
+                using (Temporary.Color(new Color(0.92f, 0.95f, 1f)))
+                {
+                    Widgets.Label(pillRect, countText);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 칩 2행: 진행 중 연구 / 막힌 큐 머리(자물쇠) / 유휴. 상태 툴팁이 있으면 반환한다.
+        /// </summary>
+        private static string DrawTrackChipStatusRow(Rect rect, ResearchChannel channel,
+            ResearchProjectDef current, IReadOnlyList<ResearchProjectDef> queue)
+        {
+            Rect statusRect = new Rect(rect.x + TrackChipPad, rect.y + 22f,
+                rect.width - TrackChipPad * 2, rect.height - 28f);
             string statusText;
             Color statusColor;
             string tooltip = null;
@@ -236,7 +280,7 @@ namespace YART
                 statusText = current.LabelCap;
                 statusColor = Color.white;
             }
-            else if (queueCount > 0)
+            else if (queue != null && queue.Count > 0)
             {
                 // 머리가 막혀 있음 (크로스트랙 선행, 벤치 부재 등)
                 waiting = true;
@@ -265,39 +309,7 @@ namespace YART
                 Widgets.Label(statusRect, statusText.Truncate(statusRect.width));
             }
 
-            // 진행바 (하단)
-            if (current != null)
-            {
-                Rect barRect = new Rect(rect.x + 1f, rect.yMax - 4f, (rect.width - 2f) * Mathf.Clamp01(current.ProgressPercent), 3f);
-                Widgets.DrawBoxSolid(new Rect(rect.x + 1f, rect.yMax - 4f, rect.width - 2f, 3f), new Color(0f, 0f, 0f, 0.5f));
-                Widgets.DrawBoxSolid(barRect, trackColor);
-            }
-
-            if (channel.Tooltip != null) tooltip = tooltip == null ? channel.Tooltip : tooltip + "\n\n" + channel.Tooltip;
-
-            if (tooltip != null)
-            {
-                TooltipHandler.TipRegion(rect, tooltip);
-            }
-
-            // 프리셋 에디터가 열려 있는 동안에는 트랙(채널) 전환 금지 — 프리뷰 맥락 유지
-            if (Widgets.ButtonInvisible(rect) && !Find.WindowStack.IsOpen<Dialog_PresetEditor>())
-            {
-                // 통합 뷰 ON + 벤치 칩 클릭 → 통합 키로 전환 (일반 탭 키로 돌아가지 않게).
-                if (YARTMod.Settings.unifiedBenchView && channel.IsBench)
-                {
-                    GraphBuildPipeline.EnsureBuilt();
-                    ResearchGraph.Instance.GetOrBuildUnifiedBench();
-                    if (ResearchGraph.Instance.GetSubGraph(GraphKey.UnifiedBench) != null)
-                        SwitchGraph(GraphKey.UnifiedBench);
-                    else
-                        SwitchGraph(new GraphKey(channel, selectedTab));
-                }
-                else
-                {
-                    SwitchGraph(new GraphKey(channel, selectedTab));
-                }
-            }
+            return tooltip;
         }
 
         private void DrawUnifiedBenchToggle(Rect rect)
@@ -335,27 +347,21 @@ namespace YART
 
             TooltipHandler.TipRegion(rect, "YART_AllTabsTooltip".Translate());
 
-            if (Widgets.ButtonInvisible(rect))
+            if (!Widgets.ButtonInvisible(rect)) return;
+
+            if (isOn)
             {
-                if (!isOn)
-                {
-                    // ON: 통합 그래프 빌드 후 서브그래프가 존재하면 전환
-                    GraphBuildPipeline.EnsureBuilt();
-                    ResearchGraph.Instance.GetOrBuildUnifiedBench();
-                    if (ResearchGraph.Instance.GetSubGraph(GraphKey.UnifiedBench) != null)
-                    {
-                        YARTMod.Settings.unifiedBenchView = true;
-                        YARTMod.Settings.Write();
-                        SwitchGraph(GraphKey.UnifiedBench);
-                    }
-                }
-                else
-                {
-                    // OFF: 마지막으로 보던 탭으로 복귀
-                    YARTMod.Settings.unifiedBenchView = false;
-                    YARTMod.Settings.Write();
-                    SwitchGraph(new GraphKey(ChannelRegistry.Bench, selectedTab));
-                }
+                // OFF로: 마지막으로 보던 탭으로 복귀
+                YARTMod.Settings.unifiedBenchView = false;
+                YARTMod.Settings.Write();
+                SwitchGraph(new GraphKey(ChannelRegistry.Bench, selectedTab));
+            }
+            else if (EnsureUnifiedBenchGraph())
+            {
+                // ON으로: 통합 서브그래프를 확보한 경우에만 설정을 켠다
+                YARTMod.Settings.unifiedBenchView = true;
+                YARTMod.Settings.Write();
+                SwitchGraph(GraphKey.UnifiedBench);
             }
         }
 
@@ -391,41 +397,47 @@ namespace YART
 
             TooltipHandler.TipRegion(rect, "YART_TabDropdownTooltip".Translate());
 
-            if (Widgets.ButtonInvisible(rect))
+            if (!Widgets.ButtonInvisible(rect)) return;
+
+            Vector2 anchorScreen = GUIUtility.GUIToScreenPoint(new Vector2(rect.x, rect.yMax + 2f));
+            Find.WindowStack.Add(new SearchableFloatMenu(anchorScreen, rect.width + 80f,
+                BuildTabDropdownOptions(tabs, currentTab)));
+        }
+
+        /// <summary>드롭다운 항목: 위쪽에 프리셋(편집·삭제 버튼 포함), 아래쪽에 일반 연구 탭.</summary>
+        private List<SearchableFloatMenu.Option> BuildTabDropdownOptions(
+            List<ResearchTabDef> tabs, ResearchTabDef currentTab)
+        {
+            var options = new List<SearchableFloatMenu.Option>();
+
+            foreach (var preset in TabPresetManager.Presets)
             {
-                var options = new List<SearchableFloatMenu.Option>();
+                var local = preset;
+                if (local.ResolveTabs().Count == 0) continue;
 
-                foreach (var preset in TabPresetManager.Presets)
+                var trailing = new List<SearchableFloatMenu.TrailingButton>
                 {
-                    var local = preset;
-                    if (local.ResolveTabs().Count == 0) continue;
-                    bool sel = CurrentKey.IsPreset && CurrentKey.PresetId == local.Id;
-                    var trailing = new List<SearchableFloatMenu.TrailingButton>
-                    {
-                        new SearchableFloatMenu.TrailingButton(TexButton.Rename,
-                            () => OpenPresetEditor(local), "YART_Preset_Edit".Translate()),
-                        new SearchableFloatMenu.TrailingButton(TexButton.CloseXSmall,
-                            () => ConfirmDeletePreset(local), "YART_Preset_Delete".Translate(),
-                            new Color(0.95f, 0.55f, 0.5f)),
-                    };
-                    options.Add(new SearchableFloatMenu.Option(local.Name, () => SelectPreset(local),
-                        selected: sel, trailing: trailing, leading: FavStar(Favorites.PresetKey(local.Id))));
-                }
-
-                // 하단: 일반 연구 탭
-                foreach (var tab in tabs)
-                {
-                    var localTab = tab;
-                    options.Add(new SearchableFloatMenu.Option(localTab.LabelCap, () =>
-                    {
-                        SwitchGraph(new GraphKey(ChannelRegistry.Bench, localTab));
-                    }, selected: !CurrentKey.IsPreset && localTab == currentTab,
-                        leading: FavStar(Favorites.TabKey(localTab))));
-                }
-
-                Vector2 anchorScreen = GUIUtility.GUIToScreenPoint(new Vector2(rect.x, rect.yMax + 2f));
-                Find.WindowStack.Add(new SearchableFloatMenu(anchorScreen, rect.width + 80f, options));
+                    new SearchableFloatMenu.TrailingButton(TexButton.Rename,
+                        () => OpenPresetEditor(local), "YART_Preset_Edit".Translate()),
+                    new SearchableFloatMenu.TrailingButton(TexButton.CloseXSmall,
+                        () => ConfirmDeletePreset(local), "YART_Preset_Delete".Translate(),
+                        new Color(0.95f, 0.55f, 0.5f)),
+                };
+                options.Add(new SearchableFloatMenu.Option(local.Name, () => SelectPreset(local),
+                    selected: CurrentKey.IsPreset && CurrentKey.PresetId == local.Id,
+                    trailing: trailing, leading: FavStar(Favorites.PresetKey(local.Id))));
             }
+
+            foreach (var tab in tabs)
+            {
+                var localTab = tab;
+                options.Add(new SearchableFloatMenu.Option(localTab.LabelCap,
+                    () => SwitchGraph(new GraphKey(ChannelRegistry.Bench, localTab)),
+                    selected: !CurrentKey.IsPreset && localTab == currentTab,
+                    leading: FavStar(Favorites.TabKey(localTab))));
+            }
+
+            return options;
         }
 
         // ── 즐겨찾기 퀵리스트─────────────────────────────
@@ -500,12 +512,8 @@ namespace YART
 
         private void DrawAddPresetButton(Rect rect)
         {
-            Widgets.DrawBoxSolid(rect, new Color(0f, 0f, 0f, 0.4f));
-            GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
-            if (Mouse.IsOver(rect)) Widgets.DrawHighlight(rect);
-            GUIDrawingUtilities.DrawIcon(rect.ContractedBy(8f), TexButton.Plus, new Color(0.75f, 0.85f, 0.95f));
-            TooltipHandler.TipRegion(rect, "YART_Preset_New".Translate());
-            if (Widgets.ButtonInvisible(rect))
+            if (DrawIconButton(rect, TexButton.Plus, new Color(0.75f, 0.85f, 0.95f), 8f,
+                    "YART_Preset_New".Translate(), bgAlpha: 0.4f))
             {
                 Find.WindowStack.Add(new Dialog_PresetEditor(this));
             }

@@ -108,41 +108,13 @@ namespace YART
             Widgets.DrawBoxSolid(bgRect, Constraints.PanelBg);
             GUIDrawingUtilities.DrawBorderLines(bgRect, Constraints.PanelBorder, 1f);
 
-            Rect searchRect = new Rect(inRect.x, inRect.y, inRect.width, SearchHeight);
-            Widgets.DrawBoxSolid(searchRect, new Color(0f, 0f, 0f, 0.4f));
-            GUIDrawingUtilities.DrawBorderLines(searchRect, Constraints.PanelBorder, 1f);
-
-            // TextField가 키를 먹기 전에 판정
+            // TextField가 키를 먹기 전에 판정해야 한다
             bool enterPressed = Event.current.type == EventType.KeyDown
                 && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter);
 
-            GUI.SetNextControlName(SearchControlName);
-            query = Widgets.TextField(new Rect(searchRect.x + 6f, searchRect.y + 2f, searchRect.width - 12f, 24f), query);
-            if (!focusRequested)
-            {
-                GUI.FocusControl(SearchControlName);
-                focusRequested = true;
-            }
-            if (query.Length == 0 && GUI.GetNameOfFocusedControl() != SearchControlName)
-            {
-                using (Temporary.Font(GameFont.Tiny))
-                using (Temporary.Anchor(TextAnchor.MiddleLeft))
-                using (Temporary.Color(Color.gray))
-                {
-                    Widgets.Label(new Rect(searchRect.x + 8f, searchRect.y, searchRect.width - 12f, searchRect.height), "Filter...");
-                }
-            }
-
-            // 필터
-            filtered.Clear();
-            string q = query.Trim().ToLowerInvariant();
-            for (int i = 0; i < options.Count; i++)
-            {
-                if (q.Length == 0 || options[i].Label.ToLowerInvariant().Contains(q))
-                {
-                    filtered.Add(options[i]);
-                }
-            }
+            Rect searchRect = new Rect(inRect.x, inRect.y, inRect.width, SearchHeight);
+            DrawSearchField(searchRect);
+            ApplyFilter();
 
             if (enterPressed && filtered.Count > 0)
             {
@@ -151,83 +123,7 @@ namespace YART
                 return;
             }
 
-            // 목록
-            Rect outRect = new Rect(inRect.x, searchRect.yMax + 4f, inRect.width, inRect.height - SearchHeight - 8f);
-            Rect viewRect = new Rect(0f, 0f, outRect.width - (filtered.Count > MaxVisibleRows ? 16f : 0f), filtered.Count * RowHeight);
-            Widgets.BeginScrollView(outRect, ref scroll, viewRect);
-
-            Option clicked = null;
-            Action trailingAction = null;
-            Action leadingAction = null;
-            float rowY = 0f;
-            foreach (var option in filtered)
-            {
-                Rect rowRect = new Rect(0f, rowY, viewRect.width, RowHeight);
-                if (Mouse.IsOver(rowRect)) Widgets.DrawHighlight(rowRect);
-                if (option.Selected) Widgets.DrawBoxSolid(rowRect, new Color(1f, 1f, 1f, 0.06f));
-
-                // 좌측 토글
-                float leadingW = 0f;
-                if (option.Leading != null)
-                {
-                    float btn = RowHeight - 10f;
-                    Rect lRect = new Rect(rowRect.x + 5f, rowRect.y + (RowHeight - btn) / 2f, btn, btn);
-                    bool on = option.Leading.IsOn();
-                    var prevL = GUI.color;
-                    GUI.color = on ? option.Leading.OnColor : option.Leading.OffColor;
-                    if (Widgets.ButtonImage(lRect, on ? option.Leading.OnTex : option.Leading.OffTex))
-                        leadingAction = option.Leading.OnToggle;
-                    GUI.color = prevL;
-                    leadingW = btn + 8f;
-                }
-
-                // 우측 액션 아이콘
-                float trailingW = 0f;
-                if (option.Trailing != null && option.Trailing.Count > 0)
-                {
-                    float tx = rowRect.xMax - 2f;
-                    foreach (var tb in option.Trailing)
-                    {
-                        float btn = RowHeight - 8f;
-                        tx -= btn + 4f;
-                        Rect tRect = new Rect(tx, rowRect.y + 4f, btn, btn);
-                        if (tb.Tooltip != null) TooltipHandler.TipRegion(tRect, tb.Tooltip);
-                        var prevC = GUI.color;
-                        GUI.color = Mouse.IsOver(tRect) ? tb.Color : GenColor.WithAlpha(tb.Color, 0.75f);
-                        if (Widgets.ButtonImage(tRect, tb.Icon)) trailingAction = tb.Action;
-                        GUI.color = prevC;
-                    }
-                    trailingW = (rowRect.xMax - 2f) - tx + 4f;
-                }
-
-                Rect selectRect = new Rect(rowRect.x + leadingW, rowRect.y, rowRect.width - leadingW - trailingW, rowRect.height);
-
-                using (Temporary.Font(GameFont.Small))
-                using (Temporary.Anchor(TextAnchor.MiddleLeft))
-                using (Temporary.Color(option.Selected ? new Color(0.6f, 0.8f, 1f) : Color.white))
-                {
-                    Widgets.Label(new Rect(selectRect.x + 8f, selectRect.y, selectRect.width - 12f, selectRect.height),
-                        option.Label.Truncate(selectRect.width - 12f));
-                }
-
-                if (Widgets.ButtonInvisible(selectRect))
-                {
-                    clicked = option;
-                }
-                rowY += RowHeight;
-            }
-
-            if (filtered.Count == 0)
-            {
-                using (Temporary.Font(GameFont.Tiny))
-                using (Temporary.Anchor(TextAnchor.MiddleCenter))
-                using (Temporary.Color(Color.gray))
-                {
-                    Widgets.Label(new Rect(0f, 0f, outRect.width, RowHeight), "(no match)");
-                }
-            }
-
-            Widgets.EndScrollView();
+            DrawOptionList(inRect, searchRect, out Option clicked, out Action trailingAction, out Action leadingAction);
 
             if (leadingAction != null)
             {
@@ -248,6 +144,134 @@ namespace YART
             {
                 Select(clicked);
             }
+        }
+
+        private void DrawSearchField(Rect searchRect)
+        {
+            Widgets.DrawBoxSolid(searchRect, new Color(0f, 0f, 0f, 0.4f));
+            GUIDrawingUtilities.DrawBorderLines(searchRect, Constraints.PanelBorder, 1f);
+
+            GUI.SetNextControlName(SearchControlName);
+            query = Widgets.TextField(new Rect(searchRect.x + 6f, searchRect.y + 2f, searchRect.width - 12f, 24f), query);
+            if (!focusRequested)
+            {
+                GUI.FocusControl(SearchControlName);
+                focusRequested = true;
+            }
+
+            if (query.Length != 0 || GUI.GetNameOfFocusedControl() == SearchControlName) return;
+
+            using (Temporary.Font(GameFont.Tiny))
+            using (Temporary.Anchor(TextAnchor.MiddleLeft))
+            using (Temporary.Color(Color.gray))
+            {
+                Widgets.Label(new Rect(searchRect.x + 8f, searchRect.y, searchRect.width - 12f, searchRect.height), "Filter...");
+            }
+        }
+
+        private void ApplyFilter()
+        {
+            filtered.Clear();
+            string q = query.Trim().ToLowerInvariant();
+            for (int i = 0; i < options.Count; i++)
+            {
+                if (q.Length == 0 || options[i].Label.ToLowerInvariant().Contains(q))
+                {
+                    filtered.Add(options[i]);
+                }
+            }
+        }
+
+        private void DrawOptionList(Rect inRect, Rect searchRect, out Option clicked, out Action trailingAction, out Action leadingAction)
+        {
+            clicked = null;
+            trailingAction = null;
+            leadingAction = null;
+
+            Rect outRect = new Rect(inRect.x, searchRect.yMax + 4f, inRect.width, inRect.height - SearchHeight - 8f);
+            Rect viewRect = new Rect(0f, 0f, outRect.width - (filtered.Count > MaxVisibleRows ? 16f : 0f), filtered.Count * RowHeight);
+            Widgets.BeginScrollView(outRect, ref scroll, viewRect);
+
+            float rowY = 0f;
+            foreach (var option in filtered)
+            {
+                if (DrawRow(new Rect(0f, rowY, viewRect.width, RowHeight), option, ref trailingAction, ref leadingAction))
+                {
+                    clicked = option;
+                }
+                rowY += RowHeight;
+            }
+
+            if (filtered.Count == 0)
+            {
+                using (Temporary.Font(GameFont.Tiny))
+                using (Temporary.Anchor(TextAnchor.MiddleCenter))
+                using (Temporary.Color(Color.gray))
+                {
+                    Widgets.Label(new Rect(0f, 0f, outRect.width, RowHeight), "(no match)");
+                }
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        /// <summary>한 행을 그리고 라벨 영역이 클릭됐는지 반환. 아이콘 클릭은 ref 액션으로 전달.</summary>
+        private static bool DrawRow(Rect rowRect, Option option, ref Action trailingAction, ref Action leadingAction)
+        {
+            if (Mouse.IsOver(rowRect)) Widgets.DrawHighlight(rowRect);
+            if (option.Selected) Widgets.DrawBoxSolid(rowRect, new Color(1f, 1f, 1f, 0.06f));
+
+            float leadingW = DrawLeadingToggle(rowRect, option.Leading, ref leadingAction);
+            float trailingW = DrawTrailingButtons(rowRect, option.Trailing, ref trailingAction);
+
+            Rect selectRect = new Rect(rowRect.x + leadingW, rowRect.y, rowRect.width - leadingW - trailingW, rowRect.height);
+
+            using (Temporary.Font(GameFont.Small))
+            using (Temporary.Anchor(TextAnchor.MiddleLeft))
+            using (Temporary.Color(option.Selected ? new Color(0.6f, 0.8f, 1f) : Color.white))
+            {
+                Widgets.Label(new Rect(selectRect.x + 8f, selectRect.y, selectRect.width - 12f, selectRect.height),
+                    option.Label.Truncate(selectRect.width - 12f));
+            }
+
+            return Widgets.ButtonInvisible(selectRect);
+        }
+
+        /// <summary>좌측 토글을 그리고 라벨이 피해야 할 폭을 반환.</summary>
+        private static float DrawLeadingToggle(Rect rowRect, LeadingToggle leading, ref Action leadingAction)
+        {
+            if (leading == null) return 0f;
+
+            float btn = RowHeight - 10f;
+            Rect lRect = new Rect(rowRect.x + 5f, rowRect.y + (RowHeight - btn) / 2f, btn, btn);
+            bool on = leading.IsOn();
+            using (Temporary.Color(on ? leading.OnColor : leading.OffColor))
+            {
+                if (Widgets.ButtonImage(lRect, on ? leading.OnTex : leading.OffTex))
+                    leadingAction = leading.OnToggle;
+            }
+            return btn + 8f;
+        }
+
+        /// <summary>우측 액션 아이콘들을 그리고 라벨이 피해야 할 폭을 반환.</summary>
+        private static float DrawTrailingButtons(Rect rowRect, List<TrailingButton> trailing, ref Action trailingAction)
+        {
+            if (trailing == null || trailing.Count == 0) return 0f;
+
+            float right = rowRect.xMax - 2f;
+            float tx = right;
+            foreach (var tb in trailing)
+            {
+                float btn = RowHeight - 8f;
+                tx -= btn + 4f;
+                Rect tRect = new Rect(tx, rowRect.y + 4f, btn, btn);
+                if (tb.Tooltip != null) TooltipHandler.TipRegion(tRect, tb.Tooltip);
+                using (Temporary.Color(Mouse.IsOver(tRect) ? tb.Color : GenColor.WithAlpha(tb.Color, 0.75f)))
+                {
+                    if (Widgets.ButtonImage(tRect, tb.Icon)) trailingAction = tb.Action;
+                }
+            }
+            return right - tx + 4f;
         }
 
         private void Select(Option option)

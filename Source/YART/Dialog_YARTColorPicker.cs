@@ -35,6 +35,7 @@ namespace YART
         private static readonly List<Color> pickable = BuildPickable();
         private static readonly Regex HexRegex = new Regex("^[0-9a-fA-F]*$");
         private static readonly Regex IntRegex = new Regex("^[0-9]*$");
+        private static readonly string[] ChannelLabels = { "R", "G", "B" };
 
         private const int SvRes = 128;
 
@@ -86,13 +87,19 @@ namespace YART
             float y = svRect.yMax + 12f;
             float ctlW = hueRect.xMax - inRect.x;
             const float rowH = 28f, rowGap = 4f;
-            DrawChannel(new Rect(inRect.x, y, ctlW, rowH), "R", 0); y += rowH + rowGap;
-            DrawChannel(new Rect(inRect.x, y, ctlW, rowH), "G", 1); y += rowH + rowGap;
-            DrawChannel(new Rect(inRect.x, y, ctlW, rowH), "B", 2); y += rowH + rowGap;
+            for (int i = 0; i < ChannelLabels.Length; i++)
+            {
+                DrawChannel(new Rect(inRect.x, y, ctlW, rowH), ChannelLabels[i], i);
+                y += rowH + rowGap;
+            }
             DrawHexRow(new Rect(inRect.x, y, ctlW, rowH));
 
-            // 하단 버튼
-            float butH = 38f, butW = 150f;
+            DrawFooterButtons(inRect);
+        }
+
+        private void DrawFooterButtons(Rect inRect)
+        {
+            const float butH = 38f, butW = 150f;
             if (Widgets.ButtonText(new Rect(inRect.x, inRect.yMax - butH, butW, butH), "Cancel".Translate()))
                 Close();
             if (Widgets.ButtonText(new Rect(inRect.xMax - butW, inRect.yMax - butH, butW, butH), "Accept".Translate()))
@@ -184,23 +191,28 @@ namespace YART
             Widgets.DrawBoxSolid(old, oldColor);
             Widgets.DrawBox(old, 1);
 
-            float gy = old.yMax + 10f;
+            DrawSwatchGrid(new Rect(r.x, old.yMax + 10f, r.width, r.yMax - 28f - (old.yMax + 10f)));
+
+            Rect def = new Rect(r.x, r.yMax - 24f, r.width, 24f);
+            if (Widgets.ButtonText(def, "Default".Translate().CapitalizeFirst()))
+                SetColor(defaultColor);
+        }
+
+        private void DrawSwatchGrid(Rect area)
+        {
             const float sw = 22f, sgap = 4f;
-            int cols = Mathf.Max(1, Mathf.FloorToInt((r.width + sgap) / (sw + sgap)));
+            int cols = Mathf.Max(1, Mathf.FloorToInt((area.width + sgap) / (sw + sgap)));
             for (int i = 0; i < pickable.Count; i++)
             {
                 int row = i / cols, col = i % cols;
-                Rect s = new Rect(r.x + col * (sw + sgap), gy + row * (sw + sgap), sw, sw);
-                if (s.yMax > r.yMax - 28f) break;
+                Rect s = new Rect(area.x + col * (sw + sgap), area.y + row * (sw + sgap), sw, sw);
+                if (s.yMax > area.yMax) break;
+
                 Widgets.DrawBoxSolid(s, pickable[i]);
                 if (Mouse.IsOver(s)) using (Temporary.Color(Color.white)) Widgets.DrawBox(s, 2);
                 else Widgets.DrawBox(s, 1);
                 if (Widgets.ButtonInvisible(s)) SetColor(pickable[i]);
             }
-
-            Rect def = new Rect(r.x, r.yMax - 24f, r.width, 24f);
-            if (Widgets.ButtonText(def, "Default".Translate().CapitalizeFirst()))
-                SetColor(defaultColor);
         }
 
         private void DrawChannel(Rect row, string label, int idx)
