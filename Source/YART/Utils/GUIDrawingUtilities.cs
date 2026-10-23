@@ -8,13 +8,9 @@ namespace YART.Utils
     {
         public static void DrawBorderLines(Rect rect, Color color, float width)
         {
-            // Top
             Widgets.DrawBoxSolid(new Rect(rect.x, rect.y, rect.width, width), color);
-            // Bottom
             Widgets.DrawBoxSolid(new Rect(rect.x, rect.yMax - width, rect.width, width), color);
-            // Left
             Widgets.DrawBoxSolid(new Rect(rect.x, rect.y, width, rect.height), color);
-            // Right
             Widgets.DrawBoxSolid(new Rect(rect.xMax - width, rect.y, width, rect.height), color);
         }
 
@@ -23,9 +19,7 @@ namespace YART.Utils
             Widgets.DrawBoxSolid(new Rect(rect.x, rect.y, rect.width, height), color);
         }
 
-        /// <summary>
-        /// 흰색+알파 아이콘 텍스처를 지정 색으로 틴트해서 그린다.
-        /// </summary>
+        /// <summary>흰색+알파 아이콘이어야 색이 제대로 입혀짐</summary>
         public static void DrawIcon(Rect rect, Texture2D icon, Color color)
         {
             if (icon == null) return;

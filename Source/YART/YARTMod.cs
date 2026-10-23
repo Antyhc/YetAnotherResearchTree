@@ -31,9 +31,6 @@ namespace YART
         }
     }
 
-    /// <summary>
-    /// 바닐라 연구 버튼(MainButtonDefOf.Research)의 탭 윈도우를 YART로 교체한다.
-    /// </summary>
     [StaticConstructorOnStartup]
     public static class VanillaTabReplacer
     {
@@ -58,7 +55,7 @@ namespace YART
 
         public static void SwitchTo(bool useYart)
         {
-            // 설정 영속화 (다음에 연구 버튼을 눌렀을 때도 같은 창이 열리도록)
+            // 다음에 연구 버튼을 눌러도 같은 창이 열리게 저장
             if (YARTMod.Settings.replaceVanillaResearchTab != useYart)
             {
                 YARTMod.Settings.replaceVanillaResearchTab = useYart;
@@ -67,8 +64,8 @@ namespace YART
 
             var researchButton = MainButtonDefOf.Research;
 
-            // 두 연구창 모두 def==Research라 OpenTab이 동일 → SetCurrentTab/ToggleTab으론 같은 프레임에
-            // 재오픈이 안 된다(닫히기만 함). WindowStack을 직접 조작해 즉시 swap한다.
+            // 두 창 모두 def가 Research라 SetCurrentTab/ToggleTab으론 같은 프레임에 다시 열리지 않고 닫히기만 함
+            // 그래서 WindowStack을 직접 조작해 바꾼다
             var open = Find.WindowStack?.WindowOfType<MainTabWindow>();
             bool wasOpen = open != null && open.def == researchButton;
             if (wasOpen) Find.WindowStack.TryRemove(open, doCloseSound: false);
@@ -76,7 +73,6 @@ namespace YART
             researchButton.tabWindowClass = useYart ? typeof(MainTabWindow_YART) : typeof(MainTabWindow_Research);
             TabWindowIntField.SetValue(researchButton, null);
 
-            // 직전에 열려 있었으면 새 클래스 창을 즉시 연다
             if (wasOpen)
             {
                 Find.WindowStack.Add(researchButton.TabWindow);

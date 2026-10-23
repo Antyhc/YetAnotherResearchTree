@@ -8,23 +8,14 @@ using Verse;
 
 namespace YART.Data
 {
-    /// <summary>
-    /// 검색용 문자열 정규화. 코퍼스 색인과 쿼리에 "동일하게" 적용해야 suffix-array 부분문자열 매칭이
-    /// 다국어를 지원한다 (docs/SEARCH_I18N_PLAN.md). 스크립트별 전략:
-    ///   · ASCII/라틴 : 소문자 + 결합표시(악센트) 제거 (프랑스어·베트남어 등). ß→ss, đ→d 등 특수.
-    ///   · 한글       : 음절 → 호환 자모 분해 ("남"→ㄴㅏㅁ 이 "나무"→ㄴㅏㅁㅜ 의 접두가 됨).
-    ///   · 가나       : 히라가나/가타카나 → 헵번 로마자 ("デンキ"→"denki").
-    ///   · 한자(CJK)  : 활성 언어가 중국어면 병음, 일본어면 음독(로마자). 둘 다 라틴으로 수렴.
-    /// 한자 테이블은 Unihan 베이크(Resources/cjk_readings.txt.gz)를 언어로 게이트해 지연 로드.
-    /// 출력에 '|'(필드 구분자)·'\0'(노드 경계)를 절대 생성하지 않는다.
-    /// </summary>
+    /// <summary>코퍼스와 쿼리에 똑같이 적용해야 함. 출력에 '|', '\0'을 만들지 않음</summary>
     public static class SearchNormalizer
     {
         private static bool _inited;
-        private static Dictionary<int, string> _cjk; // codepoint → 로마자(병음 또는 음독). null이면 한자 무변환.
+        private static Dictionary<int, string> _cjk; // codepoint -> 병음 또는 음독 로마자. null이면 한자 그대로
         private static readonly object _lock = new object();
 
-        /// <summary>그래프 재빌드 시 호출 — 언어 변경 가능성에 대비해 다음 Normalize에서 재초기화.</summary>
+        /// <summary>언어가 바뀌었을 수 있을 때 호출</summary>
         public static void Reset()
         {
             lock (_lock) { _inited = false; _cjk = null; }
@@ -92,13 +83,13 @@ namespace YART.Data
             {
                 char c = raw[i];
 
-                if (c < 0x80) { sb.Append(char.ToLowerInvariant(c)); continue; } // ASCII 빠른 경로
+                if (c < 0x80) { sb.Append(char.ToLowerInvariant(c)); continue; }
 
-                if (c >= 0xAC00 && c <= 0xD7A3) { AppendHangulJamo(sb, c); continue; } // 한글 음절 → 자모
+                if (c >= 0xAC00 && c <= 0xD7A3) { AppendHangulJamo(sb, c); continue; }
 
-                if (ToHiragana(c) != '\0' || c == (char)0x30FC) { i = AppendKanaRun(sb, raw, i); continue; } // 가나 → 로마자
+                if (ToHiragana(c) != '\0' || c == (char)0x30FC) { i = AppendKanaRun(sb, raw, i); continue; } // 가나 -> 로마자
 
-                if (_cjk != null) // 한자 → 병음/음독
+                if (_cjk != null) // 한자 -> 병음/음독
                 {
                     int cp = c;
                     bool surrogate = false;
@@ -108,7 +99,7 @@ namespace YART.Data
                     {
                         if (surrogate) i++;
                         if (_cjk.TryGetValue(cp, out var rom)) sb.Append(rom);
-                        else sb.Append(char.ConvertFromUtf32(cp)); // 매핑 없으면 원문자 보존
+                        else sb.Append(char.ConvertFromUtf32(cp));
                         continue;
                     }
                 }
@@ -123,9 +114,9 @@ namespace YART.Data
                     continue;
                 }
 
-                if (TryAppendSpecial(c, sb)) continue; // ß→ss, đ→d 등
+                if (TryAppendSpecial(c, sb)) continue;
 
-                // 라틴 결합표시 제거 + 소문자 (악센트 무시)
+                // 악센트(결합표시) 제거 후 소문자
                 if (CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.NonSpacingMark) continue;
                 foreach (char d in c.ToString().Normalize(NormalizationForm.FormD))
                 {
@@ -136,8 +127,8 @@ namespace YART.Data
             return sb.ToString();
         }
 
-        // ── 한글 ──────────────────────────────────────────────────────────────
-        // 호환 자모(U+31xx). 종성 ㅁ과 다음 글자 초성 ㅁ이 같은 문자가 되어야 "남"이 "나무"의 접두가 됨.
+        #region 한글
+        // 호환 자모(U+31xx)라야 종성 ㅁ과 다음 초성 ㅁ이 같은 문자가 되어 "남"이 "나무"의 접두가 됨
         private const string Cho = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
         private const string Jung = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ";
         private const string Jong = "ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"; // 인덱스 1..27
@@ -150,34 +141,35 @@ namespace YART.Data
             int jong = s % 28;
             if (jong > 0) sb.Append(Jong[jong - 1]);
         }
+        #endregion
 
-        // ── 가나 → 로마자 ─────────────────────────────────────────────────────
+        #region 가나
         private static readonly Dictionary<char, string> Kana = BuildKanaMap();
 
         private static char ToHiragana(char c)
         {
-            if (c >= 0x3041 && c <= 0x3096) return c;             // 히라가나
-            if (c >= 0x30A1 && c <= 0x30F6) return (char)(c - 0x60); // 가타카나 → 히라가나
+            if (c >= 0x3041 && c <= 0x3096) return c;
+            if (c >= 0x30A1 && c <= 0x30F6) return (char)(c - 0x60); // 가타카나
             return '\0';
         }
 
-        /// <summary>start의 가나 런을 로마자로 변환. 반환값 = 런의 마지막 인덱스(호출부 루프가 ++).</summary>
+        /// <summary>런의 마지막 인덱스를 반환. 호출부 루프가 ++ 함</summary>
         private static int AppendKanaRun(StringBuilder sb, string raw, int start)
         {
-            string pending = null; // 직전 음절 (요음/장음 결합 위해 보류)
-            bool sokuon = false;   // っ — 다음 자음 중복
+            string pending = null; // 요음, 장음과 합치려고 보류한 직전 음절
+            bool sokuon = false;   // っ: 다음 자음 중복
             int i = start;
             for (; i < raw.Length; i++)
             {
                 char oc = raw[i];
-                if (oc == (char)0x30FC) // ー 장음 → 직전 모음 반복
+                if (oc == (char)0x30FC) // ー 장음: 직전 모음 반복
                 {
                     if (pending != null) { sb.Append(pending); char v = LastVowel(pending); pending = null; if (v != '\0') sb.Append(v); }
                     else if (sb.Length > 0 && IsVowel(sb[sb.Length - 1])) sb.Append(sb[sb.Length - 1]);
                     continue;
                 }
                 char h = ToHiragana(oc);
-                if (h == '\0') break; // 가나 아님 → 런 종료
+                if (h == '\0') break;
 
                 if (h == (char)0x3063) { if (pending != null) { sb.Append(pending); pending = null; } sokuon = true; continue; } // っ
                 if (h == (char)0x3083 || h == (char)0x3085 || h == (char)0x3087) // ゃゅょ
@@ -190,7 +182,7 @@ namespace YART.Data
                 if (!Kana.TryGetValue(h, out string rom))
                 {
                     if (pending != null) { sb.Append(pending); pending = null; }
-                    sb.Append(oc); // 알 수 없는 가나 — 원문자 보존
+                    sb.Append(oc); // 모르는 가나는 그대로
                     continue;
                 }
                 if (pending != null) { sb.Append(pending); pending = null; }
@@ -220,7 +212,7 @@ namespace YART.Data
         private static Dictionary<char, string> BuildKanaMap()
         {
             var m = new Dictionary<char, string>(128);
-            // 히라가나 키 → 헵번 로마자 (Unihan 음독 표기와 동일 계열: shi/chi/tsu/fu, 장음=모음 반복)
+            // Unihan 음독과 같은 헵번식 (shi/chi/tsu/fu, 장음은 모음 반복)
             string[] pairs =
             {
                 "あ a","い i","う u","え e","お o",
@@ -247,8 +239,9 @@ namespace YART.Data
             }
             return m;
         }
+        #endregion
 
-        // ── 한자 / 특수 ───────────────────────────────────────────────────────
+        #region 한자, 특수 문자
         private static bool IsCjkIdeograph(int cp)
         {
             return (cp >= 0x4E00 && cp <= 0x9FFF)   // CJK Unified
@@ -273,5 +266,6 @@ namespace YART.Data
                 default: return false;
             }
         }
+        #endregion
     }
 }

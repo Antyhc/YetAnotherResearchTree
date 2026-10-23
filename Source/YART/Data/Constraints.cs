@@ -18,11 +18,10 @@ namespace YART.Data
         public const float BottomTabHeight = 35f;
 
         // Input
-        // 좌클릭 후 이 이상 움직이면 클릭이 아닌 드래그로 판별
+        // 이 이상 움직이면 클릭이 아니라 드래그
         public const float ClickDragThreshold = 5f;
-        // WASD 키보드 패닝 속도
         public const float KeyboardPanSpeed = 1100f;
-        // 팬 제한
+        // 패닝해도 그래프가 화면에 이만큼은 남음
         public const float PanKeepVisible = 220f;
 
         // Track Chips
@@ -46,7 +45,7 @@ namespace YART.Data
         // Search Box
         public const float SearchBoxWidth = UnifiedBenchToggleWidth + 8f + TabDropdownWidth + 6f + TabPlusButtonSize;
 
-        /// <summary>미지(모드) 지식 카테고리 채널용 색 팔레트</summary>
+        /// <summary>모드 지식 카테고리 채널용</summary>
         public static readonly Color[] ChannelPalette =
         {
             new Color(0.95f, 0.65f, 0.25f), // Orange
@@ -76,15 +75,15 @@ namespace YART.Data
         public const float ProxyDashThickness = 2f;
 
         // Node LOD
-        public const float NodeTextMinZoom = 0.65f;   // 이 줌 미만에선 배지 숨김 + 라벨은 매트릭스 스케일로 축소 표시
+        public const float NodeTextMinZoom = 0.65f;   // 이 줌 미만에선 배지 숨기고 라벨은 축소 표시
         public const float RichCardZoomStart = 1.1f;  // 페이드 시작
         public const float RichCardZoomFull = 1.3f;   // 완전 전환
         public const float RichCardExtraHeight = 16f; // 월드 단위 세로 확장 (50 -> 66)
         public const float NodeCornerRadius = 7f;     // 화면 px
 
         // Edge Energy Pulse
-        public const float PulseSpeed = 150f;         // 이동 속도 (월드 px/초)
-        public const float PulseArriveDelay = 0.8f;   // 도착 후 다음 펄스까지 대기 (초)
+        public const float PulseSpeed = 150f;         // 월드 px/초
+        public const float PulseArriveDelay = 0.8f;   // 도착 후 다음 펄스까지, 초
         public const float PulseTailLength = 0.18f;   // 경로 대비 꼬리 길이 비율
 
         // Edge Colors
@@ -114,13 +113,13 @@ namespace YART.Data
         public static readonly Color PanelBg = new Color(0.035f, 0.085f, 0.155f, 0.96f);
         public static readonly Color PanelBorder = new Color(0.20f, 0.30f, 0.42f);
 
-        // Detail Panel / 완료 편지 — 섹션 헤더 액센트 & 텍스트 (좌측 패널과 다이얼로그가 공유)
-        public static readonly Color SectionUnlocks       = new Color(0.6f, 1f, 0.6f);    // 해금 (녹색)
-        public static readonly Color SectionPrerequisites = new Color(1f, 0.7f, 0.4f);    // 선행 (주황)
-        public static readonly Color SectionFollowups     = new Color(0.4f, 0.8f, 1f);    // 후행 연구 (파랑)
-        public static readonly Color MutedText            = new Color(0.5f, 0.5f, 0.55f); // "없음" 등 흐린 텍스트
-        public static readonly Color ToggleInactive       = new Color(0.7f, 0.75f, 0.82f);// 비활성 토글 아이콘
-        public static readonly Color BodyText             = new Color(0.82f, 0.85f, 0.9f);// 본문 텍스트
+        // Detail Panel, 완료 편지 공용
+        public static readonly Color SectionUnlocks       = new Color(0.6f, 1f, 0.6f);
+        public static readonly Color SectionPrerequisites = new Color(1f, 0.7f, 0.4f);
+        public static readonly Color SectionFollowups     = new Color(0.4f, 0.8f, 1f);
+        public static readonly Color MutedText            = new Color(0.5f, 0.5f, 0.55f);
+        public static readonly Color ToggleInactive       = new Color(0.7f, 0.75f, 0.82f);
+        public static readonly Color BodyText             = new Color(0.82f, 0.85f, 0.9f);
 
         // Tech Level Lines
         public static readonly Color TechLevelLineColor = new Color(0.22f, 0.32f, 0.46f);
@@ -144,18 +143,19 @@ namespace YART.Data
         public const float LayoutDummySpacing = 10f;
         public const float LayoutDummyVisualPad = 4f;
 
-        // 높이 제한 레이어링. per-tab 기본(통합은 SugiyamaLayout.ComputeColumnBudget가 적응형 산정).
-        public static readonly float LayoutMaxColumnHeight = 12f * (NodeSize.y + NodeSpacing.y);
-        // 통합 그래프 적응형 예산 = per-rank 실노드 수의 이 백분위수(행). 높을수록 덜 평탄화(soup↓·rank 높이↑).
-        public const float LayoutUnifiedBudgetPercentile = 0.88f;
-        // Vertex sifting 수렴 패스 상한 (큰 레이어 교차 최소화 — transpose/DP가 못 잡는 local optimum 탈출)
+        // 높이 제한 레이어링의 탭별 기본값. 통합 탭은 SugiyamaLayout.ComputeColumnBudget가 산정
+        public static float LayoutMaxColumnRows = 9.5f;
+        public static float LayoutMaxColumnHeight => LayoutMaxColumnRows * (NodeSize.y + NodeSpacing.y);
+        // 통합 그래프 예산 = rank별 실노드 수의 이 백분위수(행). 높을수록 덜 평탄화되고 rank 높이가 커짐
+        public static float LayoutUnifiedBudgetPercentile = 0.61f;
+        // transpose/DP가 빠져나오지 못하는 local optimum 탈출용
         public const int LayoutSiftingMaxPasses = 4;
-        // 최대 엣지 스팬 캡 (PickCandidate 가드)
-        public const int LayoutMaxEdgeSpan = 2;
-        // 밴드 확장으로 늘릴 수 있는 총 랭크 수 상한
-        public const int LayoutHeightLimitMaxExtraRanks = 8;
-        // 통로 포화 컬럼에서 전량 소개를 막는 실노드 최소 행 수
-        public const int LayoutHeightLimitMinRows = 6;
+        // PickCandidate 가드
+        public static int LayoutMaxEdgeSpan = 4;
+        // 밴드 확장으로 늘릴 수 있는 랭크 수 합계
+        public static int LayoutHeightLimitMaxExtraRanks = 1;
+        // 통로 포화 컬럼에서도 남겨 두는 실노드 최소 행 수
+        public static int LayoutHeightLimitMinRows = 4;
 
         // Crossing Minimization Configuration
         public const int LayoutOrderingMaxIterations = 24;
@@ -165,7 +165,7 @@ namespace YART.Data
         public const int LayoutGroupSearchMaxPasses = 8;
         public const int LayoutExactLayerMaxNodes = 10; // 부분집합 DP를 적용할 레이어 크기 상한
         // 멀티 스타트 선택 점수 = 교차 수 + 이 값 x 높이행수(estHeight/gridY)
-        public const float LayoutOrderingHeightWeight = 4f;
+        public static float LayoutOrderingHeightWeight = 0.55f;
 
         // Layout Metrics
         public const float MetricsRefViewportW = 1920f - 300f;
@@ -173,23 +173,22 @@ namespace YART.Data
         public const float MetricsBendEpsilon = 0.5f;
 
         // Rank Cost 가중치
-        public const float RankCostSpanWeight  = 0.01f; // λ: 엣지 스팬 항 가중치
-        public const float RankCostWidthWeight = 0.1f;  // μ: 사용 랭크 수 항 가중치
+        public static float RankCostSpanWeight  = 0.07f; // lambda, 엣지 스팬 항
+        public static float RankCostWidthWeight = 0.66f; // mu, 사용 랭크 수 항
 
         // Chain Shaping Convergence (ShapeChains)
         public const int LayoutChainShapeMaxPasses = 32;
         public const float LayoutChainConvergeEps = 1f;
         public const float LayoutChainHashQuantum = 0.5f;
 
-        // 스프링 이완 반복 횟수 (Gauss-Seidel 스윕 수)
+        // Gauss-Seidel 스윕 수
         public const int LayoutSpringPasses = 16;
 
-        // 스프링 self-anchor 계수 — 현재 Y를 이웃 평균으로부터 얼마나 잡아당기나
-        public const float LayoutSpringSelfAnchor = 0.05f;
+        // 이웃 평균 대신 현재 Y에 머무르려는 정도
+        public static float LayoutSpringSelfAnchor = 0.4f;
 
-        // Tikhonov 중심 정규화 λ_base — barycenter 분모에만 더해 각 노드를 0(중심선)으로 당김. 엣지 L2와 조인트로
-        // 최소화돼 드리프트·트리높이를 줄이되 fault-line은 안 생긴다(단일 볼록해). 매 패스 높이 슬랙(현재높이/H_floor)에
-        // 비례해 스케일되므로, 높이가 이미 바닥인 그래프(예: 통합)는 자동으로 무효 → 슬랜트 손해 없음. 클수록 여유 그래프를 더 압축. 0=비활성.
-        public const float LayoutSpringCenterAnchor = 0.8f;
+        // Tikhonov 중심 정규화 lambda_base, 0=비활성. barycenter 분모에만 더해 노드를 중심선(0)으로 당김
+        // 높이 슬랙(현재높이/H_floor)에 비례하므로 높이가 이미 바닥인 그래프(통합)에선 효과 없음
+        public static float LayoutSpringCenterAnchor = 0.02f;
     }
 }

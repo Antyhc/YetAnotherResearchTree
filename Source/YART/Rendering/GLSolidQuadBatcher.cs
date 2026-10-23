@@ -21,7 +21,7 @@ namespace YART.Rendering
                 Shader shader = Shader.Find("GUI/Text Shader") ?? Shader.Find("Hidden/Internal-Colored");
 
                 quadMaterial = new Material(shader);
-                // 1.7+: 항상 알파 블렌딩이라 의미 없음
+                // 1.7+는 항상 알파 블렌딩이라 블렌드 설정이 필요 없음
 #if !RW17
                 quadMaterial.hideFlags = HideFlags.HideAndDontSave;
                 quadMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
@@ -36,7 +36,6 @@ namespace YART.Rendering
         {
             if (ClipRect.width > 0 && ClipRect.height > 0)
             {
-                // Fast Way
                 if (!rect.Overlaps(ClipRect)) return;
 
                 float xMin = Mathf.Max(rect.xMin, ClipRect.xMin);
@@ -52,8 +51,8 @@ namespace YART.Rendering
             bool aboutToExceedBatch = vertices.Count >= MaxVerticesPerBatch - 4;
             if (aboutToExceedBatch) Flush();
 
-            Vector2 p1 = GUIScreenTransform.ToScreen(new Vector2(rect.x, rect.y)); // Top-Left
-            Vector2 p2 = GUIScreenTransform.ToScreen(new Vector2(rect.xMax, rect.yMax)); // Bottom-Right
+            Vector2 p1 = GUIScreenTransform.ToScreen(new Vector2(rect.x, rect.y));
+            Vector2 p2 = GUIScreenTransform.ToScreen(new Vector2(rect.xMax, rect.yMax));
 
             float x1 = p1.x;
             float y1 = p1.y;
@@ -109,9 +108,7 @@ namespace YART.Rendering
             colors.Add(leftColor);
         }
 
-        /// <summary>
-        /// 임의 사각형을 큐에 넣는다. 정점 순서는 a->b->c->d
-        /// </summary>
+        /// <summary>정점은 a->b->c->d 둘레 순서</summary>
         public static void QueueFreeQuad(Vector2 a, Vector2 b, Vector2 c, Vector2 d, Color color)
         {
             freePoly[0].p = a; freePoly[0].c = color;
@@ -139,7 +136,7 @@ namespace YART.Rendering
                 }
             }
 
-            // 최대 8정점 → 최대 3쿼드(12정점) 방출
+            // 클립 후 최대 8정점 -> 최대 3쿼드(12정점)
             if (vertices.Count >= MaxVerticesPerBatch - 12) Flush();
 
             void AddQuad(in GLClip.V v0, in GLClip.V v1, in GLClip.V v2, in GLClip.V v3)

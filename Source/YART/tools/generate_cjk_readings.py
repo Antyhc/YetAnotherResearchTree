@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Unihan_Readings.txt → 컴팩트 CJK 읽기 테이블 베이크.
+Unihan_Readings.txt -> 검색용 CJK 읽기 테이블
 
-YART 검색 i18n(Tier 2)용. 한자(CJK)를 라틴 로마자로 정규화하기 위한 글자별 읽기 테이블을 만든다.
-  - 병음(중국어): kMandarin 값의 첫 항목에서 성조(결합표시) 제거 → 무성조 라틴 병음. 예) 電 → dian
-  - 음독(일본어): kJapaneseOn 값의 첫 항목(이미 헵번 로마자) → 소문자. 예) 電 → den
+  - 병음: kMandarin 첫 항목에서 성조 제거. 예) 電 -> dian
+  - 음독: kJapaneseOn 첫 항목을 소문자로. 예) 電 -> den
 
-런타임은 활성 언어로 둘 중 하나만 로드(중국어=병음, 일본어=음독)하므로, 같은 한자가
-언어에 따라 다르게 정규화되는 충돌이 없다.
+런타임은 활성 언어 쪽만 로드하므로 같은 한자가 언어별로 충돌하지 않음
 
 출력: Resources/cjk_readings.txt(.gz)
   형식(탭 구분, 헤더 1줄): "<hexCodepoint>\t<pinyin or '-'>\t<on or '-'>"
-  둘 다 비면 줄 자체를 생략.
+  둘 다 비면 줄 생략
 
 사용:
   python generate_cjk_readings.py <Unihan_Readings.txt> <out_dir>
@@ -19,7 +17,7 @@ YART 검색 i18n(Tier 2)용. 한자(CJK)를 라틴 로마자로 정규화하기 
 import sys, os, unicodedata, gzip
 
 def strip_tones(s: str) -> str:
-    # 성조 결합표시 제거(NFD). 병음 ü의 다이어레시스도 함께 제거되어 u로 떨어짐(검색 근사).
+    # NFD로 성조 표시 제거. ü도 u가 되지만 검색용 근사라 괜찮음
     nfd = unicodedata.normalize("NFD", s)
     base = "".join(c for c in nfd if not unicodedata.combining(c))
     return base.lower()
@@ -75,7 +73,7 @@ def main():
     print(f"rows:           {len(cps)}")
     print(f"txt bytes:      {len(data)}")
     print(f"gz bytes:       {os.path.getsize(out_txt + '.gz')}")
-    # 샘플 검증 (콘솔 인코딩이 CJK 미지원이어도 죽지 않게)
+    # 샘플 출력. 콘솔이 CJK를 못 찍어도 죽지 않게
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     for ch in "電気电气研究機械":
         cp = ord(ch)

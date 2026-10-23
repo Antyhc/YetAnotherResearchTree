@@ -11,17 +11,17 @@ using YART.Rendering;
 
 namespace YART
 {
-    // 캔버스/카메라/입력: 배경(그리드·시대 틴트), 서브그래프 순회 렌더링, 팬/줌, 포커스 이동
+    // 캔버스 배경, 그래프 렌더링, 카메라 팬/줌
     public partial class MainTabWindow_YART
     {
         private void DoGraphCanvas(Rect rect)
         {
-            UpdateCameraAnimation(); // 입력/컬링 계산 전에 카메라 위치 갱신
-            HandleKeyboardPan();     // WASD (마우스 위치 무관, 검색창 입력 중에는 무시)
-            HandleInput(rect);       // 줌/팬 — 패널 영역 제외
-            ClampScroll(rect);       // 그래프가 화면에서 완전히 벗어나지 않도록 (느슨하게)
+            UpdateCameraAnimation(); // 입력/컬링 계산 전에
+            HandleKeyboardPan();     // 마우스 위치와 무관
+            HandleInput(rect);
+            ClampScroll(rect);
 
-            // 컬링 영역: World = (Screen - scroll) / zoom, 여기에 여유 마진
+            // World = (Screen - scroll) / zoom, 여기에 마진
             Vector2 minWorld = (Vector2.zero - scrollPosition) / zoomLevel;
             Vector2 maxWorld = (new Vector2(rect.width, rect.height) - scrollPosition) / zoomLevel;
             visibleRect = new Rect(minWorld.x - Constraints.CullingMargin.x, minWorld.y - Constraints.CullingMargin.y,
@@ -45,7 +45,7 @@ namespace YART
                 DrawGraphContent(viewOffset, zoomLevel);
                 PerfEndDraw();
 
-                // 비네팅 (콘텐츠 위, 패널 아래)
+                // 비네팅은 콘텐츠 위, 패널 아래
                 if (repaint) GUI.DrawTexture(rect, Assets.Vignette, ScaleMode.StretchToFill);
             }
             catch (Exception ex)
@@ -71,25 +71,19 @@ namespace YART
             return graph.TechLevelBoundaries.OrderBy(kvp => kvp.Value).ToList();
         }
 
-        /// <summary>
-        /// 다크 청사진 배경: 베이스 컬러 + 시대 구역 틴트 + 2단 그리드 + 노이즈 그레인.
-        /// 그리드/틴트는 월드 좌표에 고정되어 팬/줌과 함께 움직인다.
-        /// </summary>
+        /// <summary>그리드와 틴트는 월드 좌표에 고정</summary>
         private void DrawCanvasBackground(Rect rect, Vector2 offset, float zoom)
         {
-            // 1. 베이스
             Widgets.DrawBoxSolid(rect, Constraints.BackgroundColor);
 
-            // 2. 시대 구역 틴트
             DrawEraZoneTints(rect, offset, zoom);
 
-            // 3. 그리드
             if (YARTMod.Settings.gridBackground)
             {
                 DrawGrid(rect, offset, zoom);
             }
 
-            // 4. 노이즈 그레인
+            // 노이즈 그레인
             using (Temporary.Color(new Color(1f, 1f, 1f, Constraints.NoiseAlpha)))
             {
                 float ts = Constraints.NoiseTileScreenSize;
@@ -98,7 +92,7 @@ namespace YART
             }
         }
 
-        /// <summary>시대 구역 틴트: 경계 x에서 시작해 오른쪽으로 페이드 아웃하는 가로 그라디언트.</summary>
+        /// <summary>경계에서 오른쪽으로 페이드 아웃</summary>
         private void DrawEraZoneTints(Rect rect, Vector2 offset, float zoom)
         {
             var boundaries = SortedEraBoundaries(ResearchGraph.Instance.GetSubGraph(CurrentKey));
@@ -107,7 +101,7 @@ namespace YART
             for (int i = 0; i < boundaries.Count; i++)
             {
                 float zoneStartWorld = boundaries[i].Value;
-                // 마지막 구역은 스크롤과 무관하게 고정 폭으로 페이드 (팬 중 일렁임 방지)
+                // 마지막 구역은 팬 중 일렁이지 않게 고정 폭
                 float zoneEndWorld = i + 1 < boundaries.Count
                     ? boundaries[i + 1].Value
                     : zoneStartWorld + Constraints.GridMajorSpacing * 8f;
@@ -126,7 +120,6 @@ namespace YART
             GLSolidQuadBatcher.Flush();
         }
 
-        /// <summary>2단 그리드 (보조선은 저줌에서 페이드 아웃) + 주선 교차점 도트.</summary>
         private void DrawGrid(Rect rect, Vector2 offset, float zoom)
         {
             float minorAlpha = Mathf.InverseLerp(Constraints.GridMinorFadeOutZoom - 0.2f, Constraints.GridMinorFadeOutZoom, zoom);
@@ -138,7 +131,7 @@ namespace YART
             DrawGridLines(rect, offset, zoom, Constraints.GridMajorSpacing, Constraints.GridMajorColor, skipMajorPositions: false);
             GLLineBatcher.Flush();
 
-            if (zoom < 0.8f) return; // 도트는 고줌에서만
+            if (zoom < 0.8f) return;
 
             float dotAlpha = Mathf.InverseLerp(0.8f, 1.1f, zoom);
             Color dotColor = GenColor.WithAlpha(Constraints.GridDotColor, Constraints.GridDotColor.a * dotAlpha);
@@ -166,7 +159,7 @@ namespace YART
             float startX = Mathf.Floor(visibleRect.xMin / spacingWorld) * spacingWorld;
             for (float wx = startX; wx <= visibleRect.xMax; wx += spacingWorld)
             {
-                // 보조선 패스에서 주선 위치는 건너뜀 (이중 렌더 방지)
+                // 주선과 겹치는 보조선은 건너뜀
                 if (skipMajorPositions && Mathf.Repeat(wx, Constraints.GridMajorSpacing) < 0.01f) continue;
                 float sx = (wx * zoom) + offset.x;
                 GLLineBatcher.QueueLine(new Vector2(sx, rect.y), new Vector2(sx, rect.yMax), color);
@@ -186,7 +179,7 @@ namespace YART
             var graph = ResearchGraph.Instance.GetSubGraph(CurrentKey);
             if (graph == null) return;
 
-            // 성능 측정 스트레스 배수
+            // 성능 측정용 반복
             int reps = perfStress > 1 ? perfStress : 1;
             for (int r = 0; r < reps; r++)
             {
@@ -196,37 +189,34 @@ namespace YART
 
         private void DrawSubGraph(ResearchSubGraph graph, Vector2 offset, float zoom)
         {
-            // 입력 처리는 이벤트 패스에서 (clickPending/rightClickPending는 MouseUp에 세팅됨 — 렌더 게이트 앞)
+            // clickPending은 MouseUp 패스에서 세팅되므로 Repaint 체크보다 앞에서 처리
             HandleNodeInteraction(graph, offset, zoom);
             HandleNodeContextMenu(graph, offset, zoom);
 
-            // ── 이하 렌더링은 Repaint 패스에서만 ──
-            // IMGUI는 프레임당 OnGUI를 Layout+Repaint 2회 호출하는데, GL/배처 드로우는 Repaint에서만
-            // 실제 효력이 있다. Layout 패스의 렌더 큐잉은 전부 버려지는 순수 낭비 → 프레임타임 ~절반 절감.
+            // 이하 렌더링은 Repaint 패스에서만. Layout 패스에서 쌓은 GL 큐는 버려지는 낭비라
+            // 이것만으로 프레임타임이 약 절반
             if (Event.current.type != EventType.Repaint) return;
 
-            // 호버 포커스(디밍) 갱신 — 렌더 직전
             UpdateFocusMode(graph, offset, zoom);
             AdvanceFocusFade();
 
             DrawTechLevelLines(graph, offset, zoom);
             BuildEraBands(graph);
 
-            // 1. 엣지 먼저 (노드 뒤에 가려지도록). graph.Edges 직접 순회로 O(E).
-            PerfSec(0); // 엣지 큐 (CPU: 앵커/색/하이라이트/리본 지오메트리)
+            // 엣지가 노드 뒤에 가려지게 먼저
+            PerfSec(0); // 엣지 큐
             foreach (var edge in graph.Edges)
             {
                 DrawConnection(edge.From, edge.To, offset, zoom);
             }
             PerfSecEnd();
 
-            PerfSec(1); // 엣지 플러시 (GL 정점 제출)
+            PerfSec(1); // 엣지 플러시
             GLLineBatcher.Flush();
             GLTexturedQuadBatcher.Flush();
             PerfSecEnd();
 
-            // 2. 노드 배경 및 그래픽 요소 그리기 (Batching)
-            PerfSec(2); // 배경 큐 (CPU: 상태/색/9-slice 쿼드 생성)
+            PerfSec(2); // 배경 큐
             GLSolidQuadBatcher.Clear();
             foreach (var node in graph.Nodes)
             {
@@ -234,16 +224,14 @@ namespace YART
             }
             PerfSecEnd();
 
-            PerfSec(3); // 배경 플러시 (GL 정점 제출)
+            PerfSec(3); // 배경 플러시
             GLTexturedQuadBatcher.Flush();
             GLSolidQuadBatcher.Flush();
             PerfSecEnd();
 
-            // 2.5. 활성 경로 체인 펄스
             DrawActivePulses(graph, offset, zoom);
             GLTexturedQuadBatcher.Flush();
 
-            // 3. 노드 텍스트 (Foreground)
             Text.Anchor = TextAnchor.MiddleCenter;
             Text.Font = zoom < 0.7f ? GameFont.Tiny : GameFont.Small;
 
@@ -256,13 +244,12 @@ namespace YART
             }
             finally
             {
-                // Reset Text State
                 Text.Anchor = TextAnchor.UpperLeft;
                 Text.Font = GameFont.Small;
                 GUI.color = Color.white;
             }
 
-            // 남은 배치 라인 플러시 (DrawNodeBackground의 더미 커넥터 등)
+            // DrawNodeBackground의 더미 커넥터 라인 등
             GLLineBatcher.Flush();
             PerfSecEnd();
         }
@@ -280,7 +267,7 @@ namespace YART
             var boundaries = SortedEraBoundaries(graph);
             if (boundaries == null) return;
 
-            // 1. 경계선: X는 월드 좌표에 고정, 세로로는 줌/스크롤과 무관하게 항상 캔버스 전체를 채움
+            // 경계선은 세로로 줌/스크롤과 무관하게 캔버스 전체를 채움
             foreach (var kvp in boundaries)
             {
                 float xWorld = kvp.Value;
@@ -305,7 +292,6 @@ namespace YART
                         ? (boundaries[i + 1].Value * zoom) + offset.x
                         : float.PositiveInfinity;
 
-                    // 구역 전체가 화면 밖이면 스킵
                     if (zoneEnd < canvasRect.xMin || zoneStart > canvasRect.xMax) continue;
 
                     string label = TechLevelLabel(boundaries[i].Key);
@@ -321,10 +307,7 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 노드의 화면 렉트 (픽셀 스냅). 줌인 시 리치 카드 확장(상하 대칭)이 반영되므로
-        /// 렌더링과 히트테스트 모두 이 메서드를 사용해야 한다.
-        /// </summary>
+        /// <summary>리치 카드 확장이 반영되므로 렌더링과 히트테스트 모두 이걸 써야 함</summary>
         private static Rect GetNodeScreenRect(ResearchNode node, Vector2 offset, float zoom)
         {
             Rect world = node.Rect;
@@ -342,11 +325,7 @@ namespace YART
                 Mathf.Round(world.height * zoom));
         }
 
-        /// <summary>
-        /// 맵 이동 키로 캔버스를 패닝한다. KeyDown 이벤트가 아닌 키 상태를 매 프레임 폴링해
-        /// 부드러운 연속 이동을 구현. 일시정지 중에도 동작하도록 Time.realtimeSinceStartup 기준 dt 사용.
-        /// Repaint 패스에서만 적용해 프레임당 1회 이동(같은 프레임 다중 이벤트 중복 가산 방지).
-        /// </summary>
+        /// <summary>일시정지 중에도 움직이게 realtime dt, 프레임당 1회만 이동하게 Repaint에서만</summary>
         private void HandleKeyboardPan()
         {
             if (Event.current.type != EventType.Repaint) return;
@@ -355,10 +334,9 @@ namespace YART
             float dt = now - lastKeyPanTime;
             lastKeyPanTime = now;
 
-            // 검색창 입력 중에는 WASD를 타이핑으로 취급 (패닝 안 함)
             string focused = GUI.GetNameOfFocusedControl();
-            if (focused == "YARTSearchField" || focused == "YARTPresetName") return; // 텍스트 입력 중엔 WASD 팬 금지
-            // 첫 프레임/탭 비활성 후 복귀 등 큰 갭은 무시 (순간이동 방지)
+            if (focused == "YARTSearchField" || focused == "YARTPresetName") return; // 텍스트 입력 중엔 WASD 팬 안 함
+            // 첫 프레임이나 복귀 직후의 큰 dt는 순간이동이 되므로 무시
             if (dt <= 0f || dt > 0.2f) return;
 
             Vector2 dir = Vector2.zero;
@@ -368,7 +346,7 @@ namespace YART
             if (KeyBindingDefOf.MapDolly_Right.IsDown) dir.x -= 1f;
             if (dir == Vector2.zero) return;
 
-            scrollAnimating = false; // 유저 입력 = 포커스 애니메이션 취소
+            scrollAnimating = false;
             scrollPosition += dir * (Constraints.KeyboardPanSpeed * dt);
         }
 
@@ -376,7 +354,6 @@ namespace YART
         {
             if (!Mouse.IsOver(rect)) return;
 
-            // 마우스가 패널 위에 있으면 입력 무시
             if (IsMouseOverBlockingElement()) return;
 
             Event e = Event.current;
@@ -387,7 +364,6 @@ namespace YART
                 e.Use();
             }
 
-            // 팬 / 클릭 판별
             switch (e.type)
             {
                 case EventType.MouseDown when e.button == 0:
@@ -398,12 +374,12 @@ namespace YART
 
                 // 휠 클릭 드래그는 항상 팬
                 case EventType.MouseDrag when e.button == 2:
-                    scrollAnimating = false; // 유저 팬 = 포커스 애니메이션 취소
+                    scrollAnimating = false;
                     scrollPosition += e.delta;
                     e.Use();
                     break;
 
-                // 좌클릭 드래그는 임계값을 넘어야 팬으로 전환 (노드 클릭과 구분)
+                // 좌클릭 드래그는 노드 클릭과 구분하려고 임계값을 넘어야 팬
                 case EventType.MouseDrag when e.button == 0 && leftMouseDownOnCanvas:
                     if (!isDraggingCanvas &&
                         (e.mousePosition - leftMouseDownPos).sqrMagnitude >
@@ -414,14 +390,14 @@ namespace YART
 
                     if (isDraggingCanvas)
                     {
-                        scrollAnimating = false; // 유저 팬 = 포커스 애니메이션 취소
+                        scrollAnimating = false;
                         scrollPosition += e.delta;
                         e.Use();
                     }
                     break;
 
                 case EventType.MouseUp when e.button == 0:
-                    // 드래그 없이 떼었으면 클릭 -> 같은 OnGUI 패스의 HandleNodeInteraction에서 소비
+                    // 같은 OnGUI 패스의 HandleNodeInteraction에서 소비
                     if (leftMouseDownOnCanvas && !isDraggingCanvas)
                     {
                         clickPending = true;
@@ -436,7 +412,7 @@ namespace YART
                     break;
 
                 case EventType.MouseUp when e.button == 1:
-                    // 드래그 없이 떼었으면 우클릭 → 같은 패스의 HandleNodeContextMenu에서 소비
+                    // 같은 패스의 HandleNodeContextMenu에서 소비
                     if (rightMouseDownOnCanvas &&
                         (e.mousePosition - rightMouseDownPos).sqrMagnitude <=
                         Constraints.ClickDragThreshold * Constraints.ClickDragThreshold)
@@ -448,14 +424,13 @@ namespace YART
             }
         }
 
-        /// <summary>마우스 커서를 고정점으로 삼는 휠 줌.</summary>
         private void HandleWheelZoom(Event e, Rect rect)
         {
             float oldZoom = zoomLevel;
             float newZoom = Mathf.Clamp(oldZoom + (-e.delta.y * 0.05f), Constraints.MinZoom, Constraints.MaxZoom);
             if (Mathf.Abs(newZoom - oldZoom) <= 0.001f) return;
 
-            scrollAnimating = false; // 유저 줌 = 포커스 애니메이션 취소
+            scrollAnimating = false;
 
             Vector2 mousePosRelative = e.mousePosition - rect.position;
             Vector2 mouseWorldPos = (mousePosRelative - scrollPosition) / oldZoom;
@@ -463,17 +438,14 @@ namespace YART
             scrollPosition = mousePosRelative - (mouseWorldPos * newZoom); // 커서 아래 월드 좌표 유지
         }
 
-        /// <summary>지정된 노드를 화면 중앙으로 (ease-out 애니메이션, 진행은 UpdateCameraAnimation).</summary>
         private void FocusOnNode(ResearchNode node)
         {
             if (node == null || node.IsDummy) return;
 
-            // 화면중앙 = (노드월드좌표 * zoom) + scroll  ⇒  scroll = 화면중앙 - 노드월드좌표*zoom
             Vector2 screenCenter = new Vector2(canvasRect.width / 2f, canvasRect.height / 2f);
             StartScrollAnimation(screenCenter - (node.Center * zoomLevel));
         }
 
-        /// <summary>현재 위치에서 target까지 카메라 이동을 시작한다.</summary>
         private void StartScrollAnimation(Vector2 target)
         {
             scrollAnimStart = scrollPosition;
@@ -482,10 +454,7 @@ namespace YART
             scrollAnimating = true;
         }
 
-        /// <summary>
-        /// FocusOnNode의 부드러운 카메라 이동 진행 (ease-out cubic).
-        /// 유저가 직접 팬/줌하면 즉시 취소된다.
-        /// </summary>
+        /// <summary>유저가 직접 팬/줌하면 scrollAnimating을 꺼서 취소</summary>
         private void UpdateCameraAnimation()
         {
             if (!scrollAnimating) return;
@@ -502,11 +471,7 @@ namespace YART
             scrollPosition = Vector2.Lerp(scrollAnimStart, scrollAnimTarget, eased);
         }
 
-        /// <summary>
-        /// 팬 범위 제한: 그래프 바운딩 박스(줌 적용)가 화면에서 완전히 사라지지 않도록 스크롤을 클램프.
-        /// 최소 Constraints.PanKeepVisible 만큼은 화면에 남긴다 (느슨한 제한). 그래프가 뷰포트보다
-        /// 작아 범위가 뒤집히면 중앙으로 고정. 카메라 애니메이션 목표도 이 안으로 수렴.
-        /// </summary>
+        /// <summary>그래프를 최소 PanKeepVisible만큼 화면에 남김. 범위가 뒤집히면 중앙 고정</summary>
         private void ClampScroll(Rect rect)
         {
             var graph = ResearchGraph.Instance.GetSubGraph(CurrentKey);
@@ -521,7 +486,7 @@ namespace YART
             float gx = bb.xMin * zoomLevel, gw = bb.width * zoomLevel;
             float gy = bb.yMin * zoomLevel, gh = bb.height * zoomLevel;
 
-            // screenX(worldX) = worldX*zoom + scroll.x. 그래프 우변이 keepX 이상 보이고, 좌변이 vw-keepX 이하.
+            // screenX = worldX * zoom + scroll.x. 우변은 keepX 이상, 좌변은 vw - keepX 이하
             float minX = keepX - gx - gw;
             float maxX = vw - keepX - gx;
             if (minX > maxX) { float m = (minX + maxX) * 0.5f; minX = maxX = m; }
@@ -534,7 +499,6 @@ namespace YART
             scrollPosition.y = Mathf.Clamp(scrollPosition.y, minY, maxY);
         }
 
-        /// <summary>현재 그래프 전체가 화면에 들어오도록 줌을 맞추고 중앙으로 이동한다 (Home 키).</summary>
         private void ZoomToFit()
         {
             var graph = ResearchGraph.Instance.GetSubGraph(CurrentKey);
@@ -547,9 +511,7 @@ namespace YART
             StartScrollAnimation(new Vector2(canvasRect.width / 2f, canvasRect.height / 2f) - (bb.center * zoomLevel));
         }
 
-        /// <summary>
-        /// 노드의 홈 그래프로 전환 + 포커스 + 좌측 패널 선택. (검색 결과/큐 카드 점프 공용)
-        /// </summary>
+        /// <summary>프록시면 원본이 있는 그래프로 전환해서 포커스</summary>
         private void JumpToNode(ResearchNode node)
         {
             if (node == null || node.IsDummy) return;
@@ -558,7 +520,7 @@ namespace YART
 
             if (!realNode.Key.Equals(CurrentKey))
             {
-                SwitchGraph(realNode.Key, playSound: false); // 점프 자체 Click으로 통일 (이중 사운드 방지)
+                SwitchGraph(realNode.Key, playSound: false); // 아래 Click과 소리가 겹치지 않게
             }
             FocusOnNode(realNode);
             SoundDefOf.Click.PlayOneShotOnCamera();

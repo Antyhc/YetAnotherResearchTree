@@ -63,9 +63,8 @@ namespace YART
 
         private static void WarmUnlockedDefsCache()
         {
-            // VFE Tribals 등이 ResearchProjectDef.UnlockedDefs getter를 패치해 두면 최초 접근 시 텍스처 로드가 일어나,
-            // 워커 스레드에서 접근하면 "Tried to get a resource from a different thread" 위반이 난다.
-            // 메인 스레드에서 미리 캐시를 채워 이를 회피한다.
+            // VFE Tribals 등이 UnlockedDefs getter를 패치해 첫 접근에 텍스처를 로드함
+            // 워커 스레드에서 처음 접근하면 "different thread" 오류라 메인 스레드에서 미리 채운다
             var defs = DefDatabase<ResearchProjectDef>.AllDefsListForReading;
             for (int i = 0; i < defs.Count; i++)
             {
@@ -74,9 +73,7 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 백그라운드 빌드가 진행 중이면 그대로 두고, 실패했거나 아직 시작 전인 경우에만 동기로 빌드한다.
-        /// </summary>
+        /// <summary>백그라운드 빌드 중이면 그냥 반환. 실패/미시작일 때만 동기 빌드</summary>
         public static void EnsureBuiltNonBlocking()
         {
             var task = graphBuildTask;
@@ -87,9 +84,7 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 백그라운드 빌드가 진행 중이면 완료를 블로킹 대기한다.
-        /// </summary>
+        /// <summary>백그라운드 빌드 중이면 끝날 때까지 대기</summary>
         public static void EnsureBuilt()
         {
             var task = graphBuildTask;
@@ -104,7 +99,7 @@ namespace YART
                 }
             }
 
-            // 백그라운드 실패/미시작 폴백 (예외는 태스크 안에서 처리되므로 여기선 상태로 판단)
+            // 백그라운드 실패/미시작 폴백. 예외는 태스크 안에서 삼키므로 상태로 판단
             if (!graphReady)
             {
                 DefSnapshot.Capture();
@@ -153,18 +148,17 @@ namespace YART
             SugiyamaLayout.GroupClusteringEnabled = YARTMod.Settings.groupClusterByTab;
             AppliedGroupClusterByTab = SugiyamaLayout.GroupClusteringEnabled;
 
-            // 1. 일반 탭 서브그래프 레이아웃 (병렬)
+            // 1. 일반 탭 레이아웃
             Parallel.ForEach(graph.SubGraphs.Values.ToList(),
                 subGraph => new SugiyamaLayout().Calculate(subGraph));
 
-            // 2. 병합 서브그래프(통합 벤치 + 사용자 프리셋) "구성"만
+            // 2. 병합 서브그래프(통합 벤치, 프리셋)는 구성만
             ConstructMergedSubGraphs(graph);
 
-            // 3. 병합 서브그래프 레이아웃 (병렬)
+            // 3. 병합 서브그래프 레이아웃
             var merged = graph.SubGraphs.Values.Where(sg => sg.Key.IsPreset).ToList();
             Parallel.ForEach(merged, subGraph => new SugiyamaLayout().Calculate(subGraph));
 
-            // 4. 마무리
             ResearchNode.InvalidateAllPorts();
             layoutCalculated = true;
             SearchEngine.Build(graph.AllNodes.Values);
@@ -242,21 +236,19 @@ namespace YART
             }
             catch (Exception ex)
             {
-                // 실패 시 플래그를 일관된 상태로 — graphReady false 유지로 빌딩 안내 표시
+                // graphReady가 false면 빌드 중 안내가 표시됨
                 graphReady = false;
                 layoutCalculated = false;
                 Log.Error("[YART] RebuildNow failed: " + ex);
             }
         }
 
-        /// <summary>
-        /// 플레이데이터 라이브 재로드(언어 변경 = ClearAllPlayData + LoadAllPlayData) 후 호출.
-        /// </summary>
+        /// <summary>언어 변경 등으로 플레이데이터를 재로드한 뒤 호출</summary>
         public static void OnPlayDataReloaded()
         {
             graphReady = false;
             layoutCalculated = false;
-            SearchEngine.Invalidate(); // 언어 재감지 — 메인 스레드에서 미리 초기화한다
+            SearchEngine.Invalidate(); // 언어 재감지는 메인 스레드에서
 
             ScheduleWarmedBackgroundBuild(() =>
             {
@@ -280,9 +272,9 @@ namespace YART
             {
                 try
                 {
-                    if (prev != null && !prev.IsCompleted) prev.Wait(); // 이전 빌드 완료 대기 (백그라운드)
+                    if (prev != null && !prev.IsCompleted) prev.Wait();
 
-                    var stopwatch = Stopwatch.StartNew(); // 이전 빌드 대기는 제외, 순수 리빌드 비용만 측정
+                    var stopwatch = Stopwatch.StartNew(); // 이전 빌드 대기 시간은 제외
                     RebuildEverything();
                     LogElapsed(stopwatch, "Non-blocking rebuild done", $" (generation {Generation})");
                 }
@@ -294,9 +286,6 @@ namespace YART
             });
         }
 
-        /// <summary>
-        /// 서브그래프별 컬럼(랭크) 높이 분포 덤프
-        /// </summary>
         [DebugAction("YART", "Column height dump", allowedGameStates = AllowedGameStates.Playing)]
         private static void DumpColumnHeights()
         {
@@ -337,9 +326,6 @@ namespace YART
             Log.Message(sb.ToString());
         }
 
-        /// <summary>
-        /// 서브그래프별 레이아웃 품질 지표 덤프
-        /// </summary>
         [DebugAction("YART", "Layout metrics dump", allowedGameStates = AllowedGameStates.Playing)]
         private static void DumpLayoutMetrics()
         {

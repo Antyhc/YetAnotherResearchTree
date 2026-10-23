@@ -4,9 +4,7 @@ using Verse;
 
 namespace YART.Utils
 {
-    /// <summary>
-    /// Unity GUI 관련 설정을 임시로 변경하고, 사용 후 자동으로 복구한다
-    /// </summary>
+    /// <summary>using 블록 동안만 GUI 상태를 바꾸고 복구</summary>
     public static class Temporary
     {
         public readonly struct TextAnchorScope : IDisposable
@@ -64,7 +62,6 @@ namespace YART.Utils
             public void Dispose() => GUI.matrix = _original;
         }
 
-        // 편의를 위한 팩토리 메서드
         public static TextAnchorScope Anchor(TextAnchor anchor) => new TextAnchorScope(anchor);
         public static GuiColorScope Color(Color color) => new GuiColorScope(color);
         public static TextFontScope Font(GameFont font) => new TextFontScope(font);

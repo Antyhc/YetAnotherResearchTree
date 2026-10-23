@@ -23,10 +23,10 @@ namespace YART
         private Rect canvasRect;
         private float eraLabelTopOffset;
         private float lastKeyPanTime;
-        private ResearchProjectDef pendingOpenDef; // 외부(InfoCard 등)에서 특정 연구로 열어달라는 요청
-        private string pendingSwitchPresetId;      // 프리셋 생성/편집 후 비동기 빌드 완료 시 자동 전환 대상
+        private ResearchProjectDef pendingOpenDef; // InfoCard 등 외부에서 열어달라고 요청한 연구
+        private string pendingSwitchPresetId;      // 비동기 빌드가 끝나면 전환할 프리셋
 
-        // Drag / Click State.
+        // Drag / Click State
         private Vector2 leftMouseDownPos;
         private bool leftMouseDownOnCanvas;
         private bool isDraggingCanvas;
@@ -35,8 +35,8 @@ namespace YART
         private bool rightMouseDownOnCanvas;
         private bool rightClickPending;
 
-        // Graph Selection State (그래프별 뷰포트 저장/복원)
-        // selectedTab: 벤치 채널에서 마지막으로 보던 탭 (다른 채널로 가도 기억)
+        // Graph Selection State
+        // selectedTab은 다른 채널로 가도 벤치에서 마지막으로 보던 탭을 기억
         private ResearchChannel selectedChannelField;
         private ResearchChannel SelectedChannel
         {
@@ -47,18 +47,15 @@ namespace YART
         private readonly Dictionary<GraphKey, Vector2> graphScrollPositions = new Dictionary<GraphKey, Vector2>();
         private readonly Dictionary<GraphKey, float> graphZoomLevels = new Dictionary<GraphKey, float>();
 
-        // DoWindowContents 진입 후 설정에 따른 통합 뷰 자동 전환을 한 번만 실행하는 단발 가드
         private bool unifiedViewApplied;
 
-        // 현재 보고 있는 프리셋(탭 그룹 또는 내장 통합). null이면 일반 탭 뷰.
+        // 탭 그룹 또는 내장 통합 프리셋. null이면 일반 탭 뷰
         private string currentPresetId;
 
-        /// <summary>현재 캔버스에 표시 중인 서브그래프 키</summary>
         private GraphKey CurrentKey => currentPresetId != null
             ? GraphKey.ForPreset(currentPresetId)
             : new GraphKey(SelectedChannel, selectedTab);
 
-        /// <summary>현재 통합 벤치 뷰(모든 탭 = 내장 프리셋)를 보고 있는가.</summary>
         private bool ViewingAllTabs => currentPresetId == GraphKey.AllTabsId;
 
         // Queue Bar State
@@ -71,28 +68,26 @@ namespace YART
         // Focus Mode State
         private ResearchNode hoveredNode = null;
         private readonly HashSet<ResearchNode> focusedNodes = new HashSet<ResearchNode>();
-        // 호버 포커스 페이드값 (0=비활성, 1=포커스).
+        // 0 = 비활성, 1 = 포커스
         private float focusAmount = 0f;
         private float lastFocusFadeTime = 0f;
 
         // External Dependents Popup (외부 후행 배지 호버 목록)
-        private ResearchNode externalListNode;        // 현재 팝업 대상 (null = 닫힘)
-        private Rect externalListRect;                // 직전 프레임 팝업 영역 (유지 판정 + 캔버스 입력 차단)
+        private ResearchNode externalListNode;        // null = 닫힘
+        private Rect externalListRect;                // 직전 프레임 값. 유지 판정과 캔버스 입력 차단용
         private Rect externalListAnchor;              // 대상 배지 rect
         private int externalListPage;
-        private ResearchNode externalListCandidate;   // 이번 프레임 배지 호버 (배지 draw에서 기록)
+        private ResearchNode externalListCandidate;   // 이번 프레임 호버된 배지, 배지 draw에서 기록
         private Rect externalListCandidateAnchor;
 
-        // Camera Focus Animation (FocusOnNode 부드러운 이동)
+        // Camera Focus Animation
         private bool scrollAnimating;
         private Vector2 scrollAnimStart;
         private Vector2 scrollAnimTarget;
         private float scrollAnimStartTime;
 
-        // 인게임 Rebuild 후 노드 참조 무효화 감지 — Generation이 변하면 스테일 참조 초기화
         private int lastSeenGeneration;
 
-        // 이 창이 게임을 일시정지시켰는지
         private bool pausedByYart;
 
         public override void PreOpen()
@@ -103,31 +98,28 @@ namespace YART
 
             MaybePauseGame();
 
-            // PreOpen에서도 설정하지만 SetInitialSizeAndPosition에서도 설정하여 확실하게 함
+            // SetInitialSizeAndPosition과 중복이지만 확실하게
             this.windowRect.x = 0;
             this.windowRect.y = 0;
             this.windowRect.width = UI.screenWidth;
             this.windowRect.height = UI.screenHeight - Constraints.BottomTabHeight;
 
-            // 창이 열릴 때 현재 제너레이션을 기준으로 삼는다.
             lastSeenGeneration = GraphBuildPipeline.Generation;
 
             bool viewReady = GraphBuildPipeline.GraphReady;
             if (viewReady) SaveCurrentView();
 
-            // 통합 뷰 상태 초기화 — DoWindowContents 첫 진입 시 설정 기반 자동 전환을 수행한다.
+            // 통합 뷰 자동 전환은 첫 DoWindowContents에서 다시 판단
             currentPresetId = null;
             unifiedViewApplied = false;
 
             if (viewReady) RestoreView(CurrentKey);
 
-            // World Tech Level 등으로 가시성 필터 레벨이 바뀌었으면(주로 게임 진입 1회) 그래프를
-            // 백그라운드로 다시 빌드한다. 필터는 정적이라 게임당 거의 1회만 트리거된다.
+            // World Tech Level 등으로 필터 레벨이 바뀌면 백그라운드 재빌드. 보통 게임당 1회
             if (WorldTechLevelCompat.NeedsRebuild)
                 GraphBuildPipeline.RebuildNonBlocking();
 
-            // 백그라운드 빌드 미완이어도 블로킹하지 않는다 — DoWindowContents가 준비될 때까지
-            // 안내 라벨을 그리고, 창은 평소처럼 닫을 수 있다. 실패/미시작 시에만 동기 폴백.
+            // 빌드가 안 끝났어도 막지 않고 안내 라벨을 그림. 실패/미시작 때만 동기 폴백
             GraphBuildPipeline.EnsureBuiltNonBlocking();
         }
 
@@ -162,7 +154,6 @@ namespace YART
             this.windowRect = new Rect(0, 0, UI.screenWidth, UI.screenHeight - Constraints.BottomTabHeight);
         }
 
-        /// <summary>그래프가 빌드되지 않는 동안 표시</summary>
         private static void DrawGraphBuildingNotice(Rect inRect)
         {
             using (Temporary.Anchor(TextAnchor.MiddleCenter))
@@ -183,10 +174,10 @@ namespace YART
             }
         }
 
-        /// <summary>한 프레임의 HUD/패널 배치. 모두 inRect 기준으로 미리 계산해 둔다.</summary>
+        /// <summary>한 프레임의 HUD/패널 배치, inRect 기준</summary>
         private struct FrameLayout
         {
-            public Rect? QueueBar;       // null = 큐 매니저 없음 (큐 바 미표시)
+            public Rect? QueueBar;       // null = 큐 매니저 없음
             public Rect TopControls;
             public Rect? LeftPanel;      // null = 선택 노드 없음
             public Rect Chips;
@@ -215,14 +206,14 @@ namespace YART
                 HandleHistoryMouseButtons();
                 HandleGlobalKeys();
 
-                canvasRect = inRect; // 전체 화면을 캔버스로 사용
+                canvasRect = inRect;
                 var layout = ComputeFrameLayout(inRect);
                 eraLabelTopOffset = layout.QueueBar != null ? Constraints.QueueBarHeight : 52f;
                 RebuildInteractionExcludeRects(layout);
 
                 DrawFrame(inRect, layout);
 
-                // 보조 마우스 버튼은 게임 카메라로 새지 않게 여기서 소비 (창 입력 격리)
+                // 보조 마우스 버튼이 게임 카메라로 새지 않게 소비
                 if ((Event.current.type == EventType.MouseDown || Event.current.type == EventType.MouseUp)
                     && Event.current.button >= 2)
                 {
@@ -231,7 +222,6 @@ namespace YART
             }
         }
 
-        /// <summary>인게임 Rebuild(Generation 변화) 후 무효가 된 노드 참조를 버린다.</summary>
         private void ResetStaleStateOnRebuild()
         {
             if (GraphBuildPipeline.Generation == lastSeenGeneration) return;
@@ -244,7 +234,6 @@ namespace YART
             lastSeenGeneration = GraphBuildPipeline.Generation;
         }
 
-        /// <summary>설정에 따른 통합 뷰 자동 전환 - 창을 연 뒤 한 번만 수행한다.</summary>
         private void ApplyUnifiedViewOnce()
         {
             if (unifiedViewApplied) return;
@@ -258,14 +247,13 @@ namespace YART
                 return;
             }
 
-            // 빌드가 실패하면 다음 프레임에 재시도 (플래그를 세우지 않음)
+            // 빌드 실패 시 다음 프레임에 재시도
             if (!EnsureUnifiedBenchGraph()) return;
 
             SwitchGraph(GraphKey.UnifiedBench, playSound: false);
             unifiedViewApplied = true;
         }
 
-        /// <summary>프리셋 생성/편집 후 비동기 빌드가 끝나면 그 프리셋 뷰로 자동 전환.</summary>
         private void ApplyPendingPresetSwitch()
         {
             if (pendingSwitchPresetId == null) return;
@@ -278,11 +266,10 @@ namespace YART
             }
             else if (TabPresetManager.ById(pendingSwitchPresetId) == null)
             {
-                pendingSwitchPresetId = null; // 삭제됐거나 사라진 프리셋 — 포기
+                pendingSwitchPresetId = null; // 삭제된 프리셋
             }
         }
 
-        /// <summary>외부(InfoCard 등)에서 요청한 연구로 점프.</summary>
         private void ApplyPendingOpenDef()
         {
             if (pendingOpenDef == null) return;
@@ -293,7 +280,7 @@ namespace YART
             pendingOpenDef = null;
         }
 
-        /// <summary>마우스 뒤로(3)/앞으로(4) 버튼 = 선택 히스토리 이동. 두 버튼 모두 여기서 소비한다.</summary>
+        /// <summary>마우스 뒤로(3)/앞으로(4) 버튼으로 선택 히스토리 이동</summary>
         private void HandleHistoryMouseButtons()
         {
             if (Event.current.type != EventType.MouseDown) return;
@@ -313,7 +300,6 @@ namespace YART
             Event.current.Use();
         }
 
-        /// <summary>Ctrl+F = 검색창 포커스, Home = 전체 보기.</summary>
         private void HandleGlobalKeys()
         {
             if (Event.current.type != EventType.KeyDown) return;
@@ -350,20 +336,19 @@ namespace YART
                     inRect.height - Constraints.QueueBarHeight);
             }
 
-            // 좌측 패널 오른쪽에 붙는 하단 줌 라벨 + 아이콘 버튼 두 개
+            // 좌측 패널 오른쪽 하단에 줌 라벨과 아이콘 버튼 두 개
             layout.Zoom = new Rect((layout.LeftPanel?.xMax ?? 0f) + 16f, inRect.yMax - 40f, 80f, 24f);
             layout.VanillaSwitch = new Rect(layout.Zoom.xMax + 6f, layout.Zoom.y, 24f, 24f);
             layout.Settings = new Rect(layout.VanillaSwitch.xMax + 6f, layout.Zoom.y, 24f, 24f);
             return layout;
         }
 
-        /// <summary>캔버스 입력을 가로막는 UI 영역 목록을 이번 프레임용으로 다시 만든다.</summary>
         private void RebuildInteractionExcludeRects(FrameLayout layout)
         {
             interactionExcludeRects.Clear();
             interactionExcludeRects.Add(layout.TopControls);
             if (layout.QueueBar != null) interactionExcludeRects.Add(layout.QueueBar.Value);
-            // 드롭다운/팝업은 직전 프레임 위치 — IMGUI 특성상 1프레임 지연은 무해
+            // 드롭다운/팝업은 직전 프레임 위치라 1프레임 늦지만 무해
             if (searchResultsRect.height > 0f) interactionExcludeRects.Add(searchResultsRect);
             if (externalListRect.height > 0f) interactionExcludeRects.Add(externalListRect);
             if (layout.LeftPanel != null) interactionExcludeRects.Add(layout.LeftPanel.Value);
@@ -374,7 +359,6 @@ namespace YART
             interactionExcludeRects.Add(layout.Settings);
         }
 
-        /// <summary>그리기 순서: 캔버스 → 큐 바 → 좌측 패널 → 플로팅 HUD → 팝업 → 오버레이.</summary>
         private void DrawFrame(Rect inRect, FrameLayout layout)
         {
             DoGraphCanvas(canvasRect);
@@ -431,31 +415,29 @@ namespace YART
             if (playSound) SoundDefOf.Click.PlayOneShotOnCamera();
         }
 
-        /// <summary>
-        /// 외부(바닐라 InfoCard 하이퍼링크 등)에서 특정 연구로 YART를 열어달라는 요청.
-        /// </summary>
+        /// <summary>바닐라 InfoCard 하이퍼링크 등 외부에서 특정 연구로 열 때</summary>
         public void RequestOpenAt(ResearchProjectDef def)
         {
             pendingOpenDef = def;
         }
 
-        // ── 프리셋 에디터(Dialog_PresetEditor)용 공개 API ───────────────────────────
-        /// <summary>현재 표시 중인 그래프 키 (에디터가 프리뷰 전 복원 지점을 기억하는 용도).</summary>
+        #region 프리셋 에디터(Dialog_PresetEditor)용 공개 API
+        /// <summary>에디터가 프리뷰 전 복원 지점으로 기억</summary>
         public GraphKey CurrentGraphKey => CurrentKey;
 
-        /// <summary>에디터의 눈(프리뷰) 또는 복원에서 캔버스를 특정 키로 즉시 전환 (그래프 준비 시에만).</summary>
+        /// <summary>그래프가 준비됐을 때만 전환</summary>
         public void PreviewGraphKey(GraphKey key)
         {
             if (GraphBuildPipeline.GraphReady) SwitchGraph(key, playSound: false);
         }
 
-        /// <summary>프리셋 생성/편집 후 비동기 빌드가 끝나면 그 프리셋 뷰로 자동 전환하도록 예약.</summary>
+        /// <summary>비동기 빌드가 끝나면 그 프리셋 뷰로 전환</summary>
         public void RequestPresetSwitch(string presetId)
         {
             pendingSwitchPresetId = presetId;
         }
 
-        /// <summary>삭제 등으로 현재 프리셋 뷰가 무효가 되면 첫 일반 탭으로 폴백.</summary>
+        /// <summary>보고 있던 프리셋이 삭제되면 첫 일반 탭으로</summary>
         public void FallbackFromPresetIfViewing(string presetId)
         {
             if (currentPresetId != presetId) return;
@@ -464,10 +446,9 @@ namespace YART
                 ? new GraphKey(ChannelRegistry.Bench, tabs[0])
                 : new GraphKey(ChannelRegistry.Bench), playSound: false);
         }
+        #endregion
 
-        /// <summary>
-        /// def를 현재 선택된 캔버스에서 표현하는 노드(원본 또는 프록시)를 반환합니다. 없으면 null.
-        /// </summary>
+        /// <summary>원본 또는 프록시 노드, 없으면 null</summary>
         private ResearchNode GetNodeOnCurrentGraph(ResearchProjectDef def)
         {
             var graph = ResearchGraph.Instance;

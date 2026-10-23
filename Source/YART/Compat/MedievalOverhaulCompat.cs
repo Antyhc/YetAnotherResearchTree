@@ -8,10 +8,7 @@ using Verse;
 
 namespace YART.Compat
 {
-    /// <summary>
-    /// Medieval Overhaul 호환 어댑터
-    /// Semantic 관련 로직을 보완한다
-    /// </summary>
+    /// <summary>Medieval Overhaul의 schematic(설계도 책) 요구 조건을 반영</summary>
     [StaticConstructorOnStartup]
     public static class MedievalOverhaulCompat
     {
@@ -23,7 +20,7 @@ namespace YART.Compat
         private static readonly Type extensionType;                 // RequiredSchematic : DefModExtension
         private static readonly FieldInfo schematicDefField;        // ThingDef schematicDef
 
-        // MO의 CanStartNow Postfix가 실제로 적용됐는가
+        // MO의 CanStartNow Postfix가 실제로 붙었는지
         private static readonly bool enforced;
 
         private static readonly Dictionary<ResearchProjectDef, ThingDef> schematicByDef = new Dictionary<ResearchProjectDef, ThingDef>();

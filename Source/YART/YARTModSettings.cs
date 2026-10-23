@@ -11,49 +11,46 @@ namespace YART
 {
     public class YARTModSettings : ModSettings
     {
-        // 사용자 정의 탭 그룹(프리셋) — 전역 영속. 드롭다운에 별도 병합 그래프 항목으로 노출.
+        // 드롭다운에 별도 병합 그래프로 노출
         public List<ResearchPreset> tabPresets = new List<ResearchPreset>();
 
-        // 즐겨찾기한 드롭다운 항목 키 (탭 = "t:"+defName, 프리셋 = "p:"+id). 전역 영속.
+        // 키: 탭은 "t:"+defName, 프리셋은 "p:"+id
         public List<string> favorites = new List<string>();
 
-        // 바닐라 연구 버튼의 탭 윈도우를 YART로 교체할지 (off = 바닐라 연구창 복원)
         public bool replaceVanillaResearchTab = true;
 
-        // 통합 벤치 뷰 — 켜면 벤치 탭을 단일 통합 그래프로 표시 (연구 창에서 토글)
+        // 벤치 탭을 하나의 통합 그래프로 표시. 연구 창에서 토글
         public bool unifiedBenchView = true;
 
-        // Preset 그래프에서 같은 연구 탭의 연구끼리 모아서 표시할지
+        // 프리셋 그래프에서 같은 탭 연구끼리 모음
         public bool groupClusterByTab = true;
 
-        // 연구 캔버스 배경으로 격자를 사용할지
         public bool gridBackground = true;
 
-        // 노드 우측에 출처(모드/DLC) 아이콘을 표시할지. ResearchNodeIconExtension 오버라이드도 이 토글을 따름.
+        // ResearchNodeIconExtension 오버라이드도 이 토글을 따름
         public bool showNodeSourceIcon = true;
 
-        // 숨겨진 선행 연구(hiddenPrerequisites)를 트리 엣지로 연결할지. off(기본) = 바닐라처럼 패널에만 표시.
+        // off면 바닐라처럼 패널에만 표시
         public bool includeHiddenPrerequisites = false;
 
-        // 선행이 더 높은 시대인 연구의 색을 유효(배치) 시대로 통일할지. off = 본래 시대 색 유지.
+        // 선행이 더 높은 시대인 연구를 배치된 시대 색으로 칠함
         public bool unifyEraColorToEffective = false;
 
-        // 좌측 패널 해금 콘텐츠를 2-column(아이콘+라벨)로 펼칠지. off = 아이콘만 나열. 패널 토글 버튼으로 변경.
+        // 좌측 패널 해금 목록을 아이콘+라벨 2열로. off면 아이콘만
         public bool unlockedContentExpanded = false;
 
-        // 호버 시 비관련 노드를 어둡게(디밍)할지. off(기본) = 디밍 없이 관련 경로만 하이라이트.
+        // 호버 시 무관한 노드를 어둡게 함
         public bool focusHighlightDimming = false;
 
-        // 연구 완료 시 바닐라 모달 창 대신 알림 편지(Letter)를 보낼지. on(기본) = 편지 / off = 바닐라 창.
         public bool completionLetterInsteadOfDialog = true;
 
-        // Semi Random Research 호환 기능. on(기본) = SRR 감지 시 연구 큐 조작 차단
+        // SRR 감지 시 연구 큐 조작 차단
         public bool semiRandomCompatEnabled = true;
 
-        // Stored Research 호환 기능. on(기본) = 감지 시 누적 연구 포인트를 상단 큐 바에 표시
+        // 누적 연구 포인트를 상단 큐 바에 표시
         public bool storedResearchCompatEnabled = true;
 
-        // 연구창을 열 때 게임을 일시정지하고 닫을 때 복원할지. off(기본). MP 세션에선 무시.
+        // MP 세션에선 무시
         public bool pauseGameWhenOpen = false;
 
         // 색상 커스터마이징
@@ -90,17 +87,15 @@ namespace YART
                 favorites = new List<string>();
             if (Scribe.mode == LoadSaveMode.LoadingVars)
                 EnsureColorsInitialized();
-            // Constraints 반영은 YARTMod ctor(GetSettings 직후) + UI 변경 핸들러에서 한다.
+            // Constraints 반영은 YARTMod ctor와 UI 변경 핸들러에서 한다
         }
 
-        // eraColors가 비었거나 길이가 안 맞으면 기본 프리셋으로 채운다.
         private void EnsureColorsInitialized()
         {
             if (eraColors == null || eraColors.Count != ColorPalette.EraCount)
                 eraColors = new List<Color>(ColorPalettes.Get(ColorPalettes.DefaultId).era);
         }
 
-        // 현재 설정 색을 ActiveColors(라이브 렌더링 소스)에 푸시한다.
         public void ApplyColors()
         {
             EnsureColorsInitialized();
@@ -112,7 +107,6 @@ namespace YART
             });
         }
 
-        // 프리셋 적용 → 전체 색 덮어쓰기 + 즉시 반영.
         private void ApplyPreset(string id)
         {
             var p = ColorPalettes.Get(id);
@@ -123,7 +117,6 @@ namespace YART
             ApplyColors();
         }
 
-        // 개별 색을 바꾸면 프리셋은 커스텀으로 전환된다.
         private void MarkCustomAndApply()
         {
             activeColorPreset = ColorPalettes.CustomId;
@@ -134,7 +127,6 @@ namespace YART
         private void SetPrereqMet(Color c)         { prereqMetColor = c;      MarkCustomAndApply(); }
         private void SetPrereqUnmet(Color c)       { prereqUnmetColor = c;    MarkCustomAndApply(); }
 
-        // 좌측 네비게이션의 섹션
         private static readonly string[] SectionKeys =
         {
             "YART_Settings_Section_Display",
@@ -143,14 +135,12 @@ namespace YART
             "YART_Settings_Section_Compat",
         };
 
-        // 현재 선택된 섹션
         private int selectedSection;
 
         private const float NavWidth   = 190f;
         private const float NavRowH    = 38f;
         private const float ColumnGap  = 16f;
 
-        // 회색 보조 설명
         private static void Hint(Listing_Standard listing, string text)
         {
             listing.Label("<color=#888888>" + text + "</color>");
@@ -243,7 +233,7 @@ namespace YART
             DrawRebuildControls(listing);
         }
 
-        // 재생성이 필요한 설정(그룹 클러스터링·숨은 선행)이 바뀌었으면 강조해서 알리고, 재생성 버튼을 그린다.
+        // 그룹 클러스터링, 숨은 선행은 재생성해야 반영됨
         private void DrawRebuildControls(Listing_Standard listing)
         {
             bool? appliedGroup = GraphBuildPipeline.AppliedGroupClusterByTab;
@@ -259,7 +249,7 @@ namespace YART
             }
 
             bool rebuildClicked = false;
-            using (Temporary.Color(rebuildNeeded ? new Color(1f, 0.8f, 0.35f) : GUI.color)) // 재생성 필요 시 주황 틴트
+            using (Temporary.Color(rebuildNeeded ? new Color(1f, 0.8f, 0.35f) : GUI.color))
                 rebuildClicked = listing.ButtonText("YART_Settings_Rebuild".Translate());
             if (rebuildClicked)
             {
@@ -281,7 +271,6 @@ namespace YART
         {
             EnsureColorsInitialized();
 
-            // 프리셋 버튼 한 줄 (활성 프리셋 하이라이트)
             Rect presetRow = listing.GetRect(32f);
             int n = ColorPalettes.SelectableIds.Length;
             const float gap = 8f;
@@ -297,7 +286,6 @@ namespace YART
             }
             listing.Gap(10f);
 
-            // 시대 색
             using (Temporary.Anchor(TextAnchor.MiddleLeft))
                 listing.Label("YART_Settings_ColorEraHeader".Translate());
             ColorPalette def = ColorPalettes.Get(ColorPalettes.DefaultId);
@@ -319,7 +307,6 @@ namespace YART
                 prereqUnmetColor, def.prereqUnmet, SetPrereqUnmet);
         }
 
-        // 스와치 + 라벨 한 행. 클릭 시 컬러 피커를 연다.
         private void ColorRow(Listing_Standard listing, string label, Color current, Color def, System.Action<Color> onSet)
         {
             Rect row = listing.GetRect(28f);

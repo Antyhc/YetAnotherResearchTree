@@ -6,9 +6,6 @@ using YART.Data;
 
 namespace YART
 {
-    /// <summary>
-    /// 연구 탭 즐겨찾기 관련 헬퍼
-    /// </summary>
     public static class Favorites
     {
         public static readonly Color OnColor = new Color(1f, 0.84f, 0.22f);

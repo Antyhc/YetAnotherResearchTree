@@ -6,15 +6,10 @@ using YART.Utils;
 
 namespace YART.Data
 {
-    /// <summary>
-    /// 연구 노드 전문 검색 (suffix array 기반).
-    /// 코퍼스: 노드별 "label|defName|description|" (본 연구 + 해금 def들) + "모드명|패키지ID|" + '\0'.
-    /// 위치→노드/필드 lookup 배열로 occurrence당 O(1) 판별, 필드 가중치로 랭킹.
-    /// Build는 백그라운드 스레드(GraphBuildPipeline), Search는 UI 스레드에서 호출됨.
-    /// </summary>
+    /// <summary>suffix array 기반 전문 검색. Build는 백그라운드 스레드, Search는 UI 스레드에서 호출</summary>
     public class ResearchSearchEngine
     {
-        // ── 필드 클래스 (랭킹 가중치 내림차순) ──
+        #region 필드 클래스
         public const byte FieldMainLabel = 0;
         public const byte FieldMainDefName = 1;
         public const byte FieldUnlockLabel = 2;
@@ -24,15 +19,16 @@ namespace YART.Data
         public const byte FieldUnlockDesc = 6;
         public const byte FieldNone = 255; // 구분자('|','\0') 위치
 
-        // 인접 등급 간 차이(≥10) > MatchBonus 최대(9) — 필드 우선순위가 항상 보너스를 지배.
+        // 인접 등급 차이(>=10)가 MatchBonus 최대(9)보다 커야 보너스가 필드 순위를 뒤집지 못함
         private static readonly int[] FieldWeights = { 100, 80, 60, 50, 30, 20, 10 };
+        #endregion
 
         public struct SearchResult
         {
             public ResearchNode Node;
             public int Score;
-            public byte ReasonField;   // 가장 약한 토큰이 매치된 필드 (FieldNone = 이유 없음)
-            public string ReasonLabel; // 해금 def 라벨 / 모드명 (본 연구 필드면 null)
+            public byte ReasonField;   // 가장 약한 토큰이 매치된 필드
+            public string ReasonLabel; // 해금 def 라벨이나 모드명, 본 연구 필드면 null
         }
 
         private struct Segment
@@ -42,6 +38,7 @@ namespace YART.Data
         }
 
         private SuffixStructure _suffix;
+        // 노드마다 def별 "label|defName|description|", "모드명|패키지ID|", 끝에 '\0'
         private string _text;
         private readonly List<ResearchNode> _nodes = new List<ResearchNode>();
         private ushort[] _posNode;
@@ -49,7 +46,7 @@ namespace YART.Data
         private readonly List<Segment[]> _segments = new List<Segment[]>();
         private readonly List<(string name, string packageId)> _knownMods = new List<(string, string)>();
 
-        // 검색 스크래치 (노드 수 크기, stamp 세대로 재사용 — 검색마다 할당 없음)
+        // 검색 스크래치. stamp 세대로 재사용해 검색마다 할당하지 않음
         private int[] _candStamp;
         private int[] _tokenStamp;
         private int[] _accumScore;
@@ -59,18 +56,13 @@ namespace YART.Data
         private int[] _weakPos;
         private int _generation;
 
-        private volatile bool _isBuilt; // 백그라운드 빌드 완료 게이트
+        private volatile bool _isBuilt;
         public bool IsBuilt => _isBuilt;
 
-        /// <summary>@ 자동완성용: 인덱스에 등장한 모든 모드. IsBuilt == true 이후에만 읽을 것 (빌드 중 변경됨).</summary>
+        /// <summary>@ 자동완성용. 빌드 중에 바뀌므로 IsBuilt 이후에만 읽을 것</summary>
         public IReadOnlyList<(string name, string packageId)> KnownMods => _knownMods;
 
-        /// <summary>
-        /// 비영어 언어용 원문 맵: DefInjected 번역이 def 필드를 덮어쓸 때 원문(영어)이
-        /// DefInjection.replacedString에 보관됨 (디컴파일 확인: DefInjectionPackage.cs).
-        /// 키 = 주입 경로("defName.label" 등). 활성 언어가 영어면 빈 맵.
-        /// 서로 다른 def 타입 간 경로 충돌은 마지막 값이 이김 — 검색 인덱싱 용도로는 무해.
-        /// </summary>
+        /// <summary>주입 경로("defName.label") -> 번역 전 영어 원문(DefInjection.replacedString). 영어면 빈 맵</summary>
         public static Dictionary<string, string> BuildOriginalStringMap()
         {
             var map = new Dictionary<string, string>();
@@ -83,20 +75,18 @@ namespace YART.Data
                     var inj = kvp.Value;
                     if (!inj.injected || inj.IsFullListInjection) continue;
                     if (string.IsNullOrEmpty(inj.replacedString)) continue;
+                    // def 타입이 달라도 경로가 같으면 마지막 값이 이김. 검색용이라 무해
                     map[kvp.Key] = inj.replacedString;
                 }
             }
             return map;
         }
 
-        /// <summary>
-        /// 인덱스를 미빌드 상태로 되돌린다 — 그래프 재빌드(RebuildNow) 후 노드 인스턴스가
-        /// 새로 만들어지면 다음 Build가 강제로 새 인덱스를 짓게 한다 (Build는 _isBuilt면 no-op).
-        /// </summary>
+        /// <summary>그래프 재빌드로 노드 인스턴스가 바뀌면 호출. 안 하면 Build가 no-op</summary>
         public void Invalidate()
         {
             _isBuilt = false;
-            SearchNormalizer.Reset(); // 언어 변경 가능성 — 다음 빌드에서 정규화 모드 재감지
+            SearchNormalizer.Reset(); // 언어가 바뀌었을 수 있음
         }
 
         public void Build(IEnumerable<ResearchNode> researchNodes)
@@ -117,7 +107,7 @@ namespace YART.Data
             {
                 if (!string.IsNullOrEmpty(raw))
                 {
-                    string s = SearchNormalizer.Normalize(raw); // 다국어 정규화 (쿼리와 동일하게 적용)
+                    string s = SearchNormalizer.Normalize(raw); // 쿼리와 같은 정규화
                     if (!string.IsNullOrEmpty(s))
                     {
                         spans.Add((sb.Length, s.Length, field));
@@ -136,7 +126,7 @@ namespace YART.Data
                 AppendField(def.defName, isMain ? FieldMainDefName : FieldUnlockDefName);
                 AppendField(def.description, isMain ? FieldMainDesc : FieldUnlockDesc);
 
-                // 비영어 언어: 번역 전 원문(영어)도 같은 필드 클래스로 인덱싱 — 영어 검색 지원
+                // 영어로도 검색되게 번역 전 원문도 같은 필드로 인덱싱
                 if (originals.Count > 0)
                 {
                     if (originals.TryGetValue(def.defName + ".label", out string origLabel) && origLabel != def.label)
@@ -166,8 +156,7 @@ namespace YART.Data
 
                 var mods = new HashSet<ModContentPack>();
                 AddDef(node.Def, isMain: true, mods);
-                // 반드시 YART 스냅샷(node.UnlockedDefs)만 읽을 것 — 패치 가능한 vanilla getter를 워커
-                // 스레드에서 직접 읽으면 텍스처 로드 위반(VFE Tribals 등). 메인스레드 워밍 후라 cache-hit.
+                // 스냅샷만 읽을 것. 패치된 vanilla getter를 워커 스레드에서 부르면 텍스처 로드 위반(VFE Tribals 등)
                 foreach (var unlocked in node.UnlockedDefs)
                 {
                     if (unlocked == null) continue;
@@ -181,15 +170,14 @@ namespace YART.Data
                     AppendField(mod.PackageId, FieldModName);
                 }
 
-                // @ 필터는 SourceMod(연구 def의 모드)만 검사하므로, 자동완성 후보도 그 기준으로만 수집
-                // (해금 def의 모드는 코퍼스에는 들어가지만 @로는 매치 불가 → 후보에 넣으면 죽은 제안이 됨)
+                // @ 필터는 SourceMod만 보므로 해금 def의 모드를 후보에 넣으면 매치 안 되는 제안이 됨
                 var mainMod = node.Def.modContentPack;
                 if (mainMod != null && seenModIds.Add(mainMod.PackageId))
                 {
                     _knownMods.Add((mainMod.Name, mainMod.PackageId));
                 }
 
-                sb.Append('\0'); // 노드 경계 — 쿼리에 못 들어가는 문자라 노드 간 매치 차단
+                sb.Append('\0'); // 쿼리에 못 들어가는 문자라 노드를 넘는 매치가 없음
                 nodeEnds.Add(sb.Length);
                 _segments.Add(segs.ToArray());
             }
@@ -203,7 +191,6 @@ namespace YART.Data
             if (Prefs.DevMode) Log.Message($"[YART] Search index built: {_nodes.Count} nodes, {_text.Length} chars.");
         }
 
-        /// <summary>코퍼스 위치 → 노드 인덱스 / 필드 클래스 lookup 배열 구성.</summary>
         private void BuildPositionLookups(List<(int start, int len, byte field)> spans, List<int> nodeEnds)
         {
             _posNode = new ushort[_text.Length];
@@ -235,7 +222,7 @@ namespace YART.Data
             _generation = 0;
         }
 
-        /// <summary>점수 내림차순으로 정렬된 결과. 빈/미빌드 시 빈 리스트.</summary>
+        /// <summary>점수 내림차순</summary>
         public List<SearchResult> Search(string query)
         {
             var results = new List<SearchResult>();
@@ -265,29 +252,29 @@ namespace YART.Data
             return results;
         }
 
-        /// <summary>쿼리를 텍스트 토큰과 @모드 토큰으로 분해. false = 매치 불가 쿼리(즉시 빈 결과).</summary>
+        /// <summary>false면 매치될 수 없는 쿼리</summary>
         private static bool ParseQuery(string query, List<string> textTokens, List<string> modTokens)
         {
             foreach (var part in query.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (part[0] == '@')
                 {
-                    if (part.Length == 1) continue; // 단독 "@"는 자동완성 입력 중 상태
+                    if (part.Length == 1) continue; // 단독 "@"는 자동완성 입력 중
                     string mod = SearchNormalizer.Normalize(part.Substring(1));
                     if (!string.IsNullOrEmpty(mod)) modTokens.Add(mod);
                     continue;
                 }
 
-                string norm = SearchNormalizer.Normalize(part); // 코퍼스와 동일 정규화
+                string norm = SearchNormalizer.Normalize(part);
                 if (string.IsNullOrEmpty(norm)) continue;
-                // '|'는 코퍼스 필드 구분자 — 포함 토큰은 어떤 단일 필드와도 매치 불가 (교차 매치 방지)
+                // '|'는 필드 구분자라 이를 포함한 토큰은 어떤 필드와도 매치될 수 없음
                 if (norm.IndexOf('|') >= 0) return false;
                 textTokens.Add(norm);
             }
             return true;
         }
 
-        /// <summary>텍스트 토큰들을 AND로 교차시켜 후보 노드 인덱스를 모은다 (_accumScore/_weakPos도 채움).</summary>
+        /// <summary>토큰 AND. _accumScore, _weakPos도 채움</summary>
         private List<int> CollectCandidates(List<string> textTokens, List<string> modTokens)
         {
             var candidates = new List<int>();
@@ -296,7 +283,7 @@ namespace YART.Data
             if (textTokens.Count == 0)
             {
                 if (modTokens.Count == 0) return candidates;
-                // @ 전용 쿼리 — 전 노드를 무점수 후보로 두고 모드 필터에 맡긴다
+                // @ 전용 쿼리: 전 노드를 0점 후보로 두고 모드 필터에 맡김
                 for (int v = 0; v < _nodes.Count; v++)
                 {
                     candidates.Add(v);
@@ -342,14 +329,13 @@ namespace YART.Data
                     }
                 }
 
-                // 이번 토큰 AND 적용 + 누적/최약 토큰 갱신
                 int w = 0;
                 for (int i = 0; i < candidates.Count; i++)
                 {
                     int v = candidates[i];
                     if (_tokenStamp[v] != tgen)
                     {
-                        _candStamp[v] = 0; // 탈락 — 이후 토큰의 occurrence 스킵용
+                        _candStamp[v] = 0; // 이후 토큰에서 occurrence 스킵
                         continue;
                     }
                     _accumScore[v] += _tokenBestScore[v];
@@ -367,7 +353,7 @@ namespace YART.Data
             return candidates;
         }
 
-        /// <summary>@ 모드 필터 — SourceMod의 name/packageId에 모든 필터가 contains (AND).</summary>
+        /// <summary>모든 @ 토큰이 SourceMod의 name이나 packageId에 들어 있어야 통과</summary>
         private void ApplyModFilter(List<int> candidates, List<string> modTokens)
         {
             int w = 0;
@@ -394,7 +380,7 @@ namespace YART.Data
         private static int CompareResults(SearchResult a, SearchResult b)
         {
             if (a.Score != b.Score) return b.Score.CompareTo(a.Score);
-            if (a.Score == 0) return string.CompareOrdinal(a.Node.Label, b.Node.Label); // @ 전용 쿼리 — 알파벳순
+            if (a.Score == 0) return string.CompareOrdinal(a.Node.Label, b.Node.Label); // @ 전용 쿼리는 이름순
             int la = a.Node.Label != null ? a.Node.Label.Length : 0;
             int lb = b.Node.Label != null ? b.Node.Label.Length : 0;
             if (la != lb) return la.CompareTo(lb);
@@ -413,7 +399,7 @@ namespace YART.Data
             return 0;
         }
 
-        /// <summary>pos가 속한 세그먼트의 라벨 (해금 def 라벨/모드명, 본 연구 필드면 null). 최종 결과에만 호출.</summary>
+        /// <summary>해금 def 라벨이나 모드명, 본 연구 필드면 null</summary>
         private string SegmentLabelAt(int nodeIdx, int pos)
         {
             var segs = _segments[nodeIdx];

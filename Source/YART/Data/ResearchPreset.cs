@@ -5,10 +5,7 @@ using Verse;
 
 namespace YART.Data
 {
-    /// <summary>
-    /// 사용자 정의 탭 그룹(프리셋).
-    /// 여러 바닐라 연구 탭(ResearchTabDef)을 하나의 병합 그래프로 묶어 드롭다운에 별도 항목으로 노출한다.
-    /// </summary>
+    /// <summary>여러 연구 탭을 하나의 병합 그래프로 묶는 사용자 탭 그룹</summary>
     public class ResearchPreset : IExposable
     {
         public string Id;
@@ -43,7 +40,7 @@ namespace YART.Data
                 TabDefNames = new List<string>();
         }
 
-        /// <summary>이 프리셋에 포함된, 현재 로드된 ResearchTabDef 목록 (소실 탭은 제외).</summary>
+        /// <summary>로드되지 않은 탭은 제외</summary>
         public List<ResearchTabDef> ResolveTabs()
         {
             var result = new List<ResearchTabDef>();

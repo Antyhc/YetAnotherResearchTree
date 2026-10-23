@@ -1,14 +1,25 @@
 using System.Collections.Generic;
+using RimWorld;
 using Verse;
+using YART.Compat;
 
 namespace YART.Data
 {
-    // `Collection was modified` 에러 방지를 위해서, 미리 복사돈을 떠둔다
+    // 백그라운드 빌드 중 `Collection was modified` 오류를 막으려고 미리 복사해 둔다
     public static class DefSnapshot
     {
+        public sealed class ResearchInput
+        {
+            public List<ResearchSpec> Specs;
+            public List<ResearchProjectDef> Defs;
+            public Dictionary<TopoKey, GraphKey> Keys;
+
+            public GraphKey KeyOf(TopoKey key) => key.IsPreset ? GraphKey.ForPreset(key.PresetId) : Keys[key];
+        }
+
         private sealed class Snapshot
         {
-            public List<ResearchProjectDef> ResearchProjects;
+            public ResearchInput Research;
             public Dictionary<ResearchProjectDef, List<Def>> ReverseUnlocks;
         }
 
@@ -37,9 +48,56 @@ namespace YART.Data
 
             current = new Snapshot
             {
-                ResearchProjects = new List<ResearchProjectDef>(DefDatabase<ResearchProjectDef>.AllDefsListForReading),
+                Research = CaptureResearch(),
                 ReverseUnlocks = reverse,
             };
+        }
+
+        private static ResearchInput CaptureResearch()
+        {
+            var input = new ResearchInput
+            {
+                Specs = new List<ResearchSpec>(),
+                Defs = new List<ResearchProjectDef>(),
+                Keys = new Dictionary<TopoKey, GraphKey>(),
+            };
+
+            foreach (var def in DefDatabase<ResearchProjectDef>.AllDefsListForReading)
+            {
+                if (!WorldTechLevelCompat.ShouldShow(def)) continue;
+
+                var key = GraphKey.For(def);
+                var spec = new ResearchSpec
+                {
+                    Id = def.defName,
+                    Label = def.label.CapitalizeFirst(),
+                    TechLevel = (int)def.techLevel,
+                    ChannelId = key.Channel.Id,
+                    ChannelIsBench = key.Channel.IsBench,
+                    TabId = key.Tab?.defName,
+                    SourceTab = def.tab?.defName,
+                    Prereqs = Ids(def.prerequisites),
+                    HiddenPrereqs = Ids(def.hiddenPrerequisites),
+                };
+                input.Specs.Add(spec);
+                input.Defs.Add(def);
+                input.Keys[TopoKey.Of(spec)] = key;
+            }
+            // 필터가 바뀌면 PreOpen에서 리빌드하도록 기록
+            WorldTechLevelCompat.MarkBuilt();
+
+            return input;
+        }
+
+        private static string[] Ids(List<ResearchProjectDef> defs)
+        {
+            if (defs == null) return null;
+            var ids = new List<string>(defs.Count);
+            for (int i = 0; i < defs.Count; i++)
+            {
+                if (defs[i] != null) ids.Add(defs[i].defName);
+            }
+            return ids.ToArray();
         }
 
         private static Snapshot Current
@@ -56,7 +114,7 @@ namespace YART.Data
             }
         }
 
-        public static List<ResearchProjectDef> ResearchProjects => Current.ResearchProjects;
+        public static ResearchInput Research => Current.Research;
 
         public static List<Def> ReverseUnlocksOf(ResearchProjectDef def)
         {

@@ -9,9 +9,6 @@ using YART.Utils;
 
 namespace YART
 {
-    /// <summary>
-    /// 성능 측정 용 하네스
-    /// </summary>
     public partial class MainTabWindow_YART
     {
         internal static bool perfOverlay;
@@ -27,7 +24,7 @@ namespace YART
         private double perfGcPerSec;
         private int perfNodes, perfEdges, perfVisNodes, perfVisEdges;
 
-        // 렌더 구간별 계측 (Canvas의 PerfSec 호출과 일치): 0=엣지 큐, 1=엣지 플러시, 2=배경 큐, 3=배경 플러시
+        // 인덱스는 Canvas의 PerfSec 호출과 맞춤: 0 엣지 큐, 1 엣지 플러시, 2 배경 큐, 3 배경 플러시
         private const int PerfSecCount = 4;
         private readonly double[] perfSecAccum = new double[PerfSecCount];
         private readonly double[] perfSecMs = new double[PerfSecCount];
@@ -60,7 +57,7 @@ namespace YART
         {
             if (!perfOverlay) return;
             perfSw.Stop();
-            // Layout = 디스플레이 프레임의 첫 패스 → 직전 프레임 합계를 확정(EMA)하고 리셋
+            // Layout은 프레임의 첫 패스라 여기서 직전 프레임 합계를 EMA에 반영하고 리셋
             if (Event.current.type == EventType.Layout)
             {
                 perfFrameMsAvg += (perfFrameAccum - perfFrameMsAvg) * 0.1;
@@ -73,7 +70,6 @@ namespace YART
             }
             perfFrameAccum += perfSw.Elapsed.TotalMilliseconds;
 
-            // 0.5초마다 비율/카운트 갱신
             float now = Time.realtimeSinceStartup;
             float dt = now - perfRateTime;
             if (dt >= 0.5f)

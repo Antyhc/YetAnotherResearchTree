@@ -68,7 +68,6 @@ namespace YART
             Widgets.DrawLineHorizontal(0f, nextY - 10f, inRect.width);
             DrawNext(new Rect(0f, nextY, inRect.width, nextBlockH));
 
-            // 닫기
             if (Widgets.ButtonText(new Rect(inRect.width - 140f, closeY, 140f, buttonH - 2f), "Close".Translate()))
             {
                 Dismiss();
@@ -89,7 +88,7 @@ namespace YART
 
         private float DrawUnlocks(float viewW, float cy)
         {
-            // 헤더 + 뷰 전환 토글
+            // 헤더, 뷰 전환 토글
             using (Temporary.Font(GameFont.Small))
             using (Temporary.Color(Constraints.SectionUnlocks))
             {

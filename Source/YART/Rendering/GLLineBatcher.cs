@@ -21,7 +21,7 @@ namespace YART.Rendering
                 Shader shader = Shader.Find("GUI/Text Shader") ?? Shader.Find("Hidden/Internal-Colored");
 
                 lineMaterial = new Material(shader);
-                // 1.7+: 항상 알파 블렌딩이라 의미 없음
+                // 1.7+는 항상 알파 블렌딩이라 블렌드 설정이 필요 없음
 #if !RW17
                 lineMaterial.hideFlags = HideFlags.HideAndDontSave;
                 lineMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
@@ -38,7 +38,6 @@ namespace YART.Rendering
             {
                 if (!LiangBarskyClip(ref start, ref end, ClipRect))
                 {
-                    // 선분이 클립 영역과 완전히 겹치지 않음
                     return;
                 }
             }
@@ -64,10 +63,7 @@ namespace YART.Rendering
             QueueLine(start, end, color, color);
         }
 
-        /// <summary>
-        /// 선분 p1-p2가 clipRect와 교차하는 부분을 계산한다. (GUI 좌표)
-        /// p1-p2가 완전히 clipRect 밖에 있으면 false 반환
-        /// </summary>
+        /// <summary>GUI 좌표. 선분이 완전히 밖이면 false</summary>
         private static bool LiangBarskyClip(ref Vector2 p1, ref Vector2 p2, Rect clipRect)
         {
             float t0 = 0.0f, t1 = 1.0f, dx = p2.x - p1.x, dy = p2.y - p1.y;

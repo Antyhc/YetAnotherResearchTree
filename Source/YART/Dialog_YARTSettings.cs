@@ -3,15 +3,13 @@ using Verse;
 
 namespace YART
 {
-    /// <summary>
-    /// 인게임 용 YART 설정창
-    /// </summary>
+    /// <summary>게임 중 YART 창에서 여는 설정 창</summary>
     public class Dialog_YARTSettings : Window
     {
         public Dialog_YARTSettings()
         {
             doCloseX = true;
-            absorbInputAroundWindow = true; // YART 창 위에서 입력 가로채기
+            absorbInputAroundWindow = true;
             closeOnClickedOutside = true;
             closeOnAccept = false;
             preventCameraMotion = false;

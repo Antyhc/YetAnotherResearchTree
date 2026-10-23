@@ -1,5 +1,4 @@
-// 게임(UnityEngine / Verse / RimWorld) 및 YART 타입의 헤드리스 대체 shim.
-// SugiyamaLayout.cs / Constraints.cs 가 실제로 사용하는 표면만 제공한다 (레이아웃 전용).
+// SugiyamaLayout.cs, Constraints.cs가 쓰는 부분만 흉내 낸 헤드리스 shim
 using System;
 using System.Collections.Generic;
 
@@ -15,7 +14,7 @@ namespace UnityEngine
     {
         public static float Floor(float v) => MathF.Floor(v);
         public static float Ceil(float v) => MathF.Ceiling(v);
-        public static float Round(float v) => MathF.Round(v, MidpointRounding.ToEven); // Unity Mathf.Round = 은행가 반올림
+        public static float Round(float v) => MathF.Round(v, MidpointRounding.ToEven); // Unity Mathf.Round는 은행가 반올림
         public static float Abs(float v) => MathF.Abs(v);
         public static float Sqrt(float v) => MathF.Sqrt(v);
         public static float Max(float a, float b) => a > b ? a : b;
@@ -62,7 +61,7 @@ namespace Verse
 
 namespace RimWorld
 {
-    // RimWorld.TechLevel (Verse 아님 — Constraints.cs가 using RimWorld만으로 해석). 값은 게임과 일치.
+    // Verse가 아니라 RimWorld 네임스페이스. 값은 게임과 같아야 함
     public enum TechLevel : byte
     {
         Undefined = 0, Animal = 1, Neolithic = 2, Medieval = 3,
@@ -72,7 +71,7 @@ namespace RimWorld
 
 namespace YART
 {
-    // 게임 YARTMod의 헤드리스 대체 (SugiyamaLayout은 GroupClusteringEnabled static을 직접 읽으므로 설정 필드 불필요)
+    // SugiyamaLayout은 GroupClusteringEnabled static을 직접 읽으므로 설정 필드 불필요
     public sealed class YARTModSettings { }
 
     public static class YARTMod
@@ -80,7 +79,6 @@ namespace YART
         public static YARTModSettings Settings = new YARTModSettings();
     }
 
-    // 인게임 export 훅의 no-op 대체 (하니스는 이미 파일에서 그래프를 읽으므로 캡처 불필요)
     public static class LayoutExport
     {
         public static void Begin() { }
@@ -94,12 +92,12 @@ namespace YART.Data
     using RimWorld;
     using UnityEngine;
 
-    // 레이아웃이 Key.Equals 만 사용하므로 문자열 기반 값 동등성으로 충분
+    // 레이아웃은 Key.Equals만 쓰므로 문자열 동등성으로 충분
     public readonly struct GraphKey : IEquatable<GraphKey>
     {
         public readonly string Id;
         public readonly bool IsUnified;
-        // 게임에선 Unified가 Preset(AllTabsId)이라 IsPreset=true. 하니스도 일치시켜 적응예산·그룹게이트가 충실해진다.
+        // 게임에서 Unified는 Preset(AllTabsId)이라 IsPreset=true. 맞춰야 적응 예산과 그룹 게이트가 같게 동작
         public bool IsPreset => IsUnified;
         public GraphKey(string id, bool unified = false) { Id = id; IsUnified = unified; }
         public bool Equals(GraphKey o) => Id == o.Id && IsUnified == o.IsUnified;
@@ -108,14 +106,13 @@ namespace YART.Data
         public override string ToString() => Id;
     }
 
-    // 레이아웃 전용 노드 (게임의 상태/큐/렌더 결합 제거)
     public sealed class ResearchNode
     {
         public bool IsDummy { get; private set; }
         public bool IsProxy { get; set; }
         public string Id { get; set; }
         public string Label { get; set; }
-        public string GroupKey { get; set; } // 그룹 클러스터링 키 (출처 탭). 더미는 소스 노드에서 상속.
+        public string GroupKey { get; set; } // 출처 탭. 더미는 소스 노드에서 상속
         public TechLevel TechLevel { get; set; }
         public GraphKey Key { get; set; }
         public int Rank { get; set; }
@@ -164,6 +161,6 @@ namespace YART.Data
 
         public void AddNode(ResearchNode n) { if (!Nodes.Contains(n)) Nodes.Add(n); }
         public void AddEdge(ResearchNode from, ResearchNode to) => Edges.Add(new ResearchEdge(from, to));
-        public void UpdateBoundingBox() { /* 렌더러가 직접 bbox 계산 — no-op */ }
+        public void UpdateBoundingBox() { /* 렌더러가 bbox를 직접 계산 */ }
     }
 }

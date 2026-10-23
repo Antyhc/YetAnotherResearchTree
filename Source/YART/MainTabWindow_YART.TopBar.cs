@@ -28,7 +28,7 @@ namespace YART
             var result = new List<ResearchTabDef>();
             foreach (var kvp in ResearchGraph.Instance.SubGraphs)
             {
-                // 프리셋 키(통합 포함)는 Tab=null이므로 반드시 먼저 건너뜀
+                // 프리셋 키(통합 포함)는 Tab이 null이라 먼저 건너뜀
                 if (kvp.Key.IsPreset) continue;
                 if (!kvp.Key.Channel.IsBench) continue;
                 if (!kvp.Value.Nodes.Any(n => !n.IsDummy && !n.IsProxy)) continue;
@@ -38,10 +38,9 @@ namespace YART
             return result;
         }
 
-        /// <summary>프리셋 에디터가 선택지로 보여줄 탭 목록 (드롭다운과 동일).</summary>
+        /// <summary>드롭다운과 같은 탭 목록</summary>
         public List<ResearchTabDef> SelectableTabsForPreset() => GetVisibleStandardTabs();
 
-        /// <summary>통합 벤치 서브그래프를 (필요하면 빌드해) 확보한다. 사용 가능하면 true.</summary>
         private static bool EnsureUnifiedBenchGraph()
         {
             GraphBuildPipeline.EnsureBuilt();
@@ -49,7 +48,6 @@ namespace YART
             return ResearchGraph.Instance.GetSubGraph(GraphKey.UnifiedBench) != null;
         }
 
-        /// <summary>어두운 배경 + 테두리 + 호버 하이라이트의 정사각 아이콘 버튼. 클릭되면 true.</summary>
         private static bool DrawIconButton(Rect rect, Texture2D icon, Color iconColor, float pad, string tooltip,
             float bgAlpha = 0.45f)
         {
@@ -86,7 +84,7 @@ namespace YART
             {
                 var visibleTabs = GetVisibleStandardTabs();
 
-                // 일반 탭 뷰일 때만 selectedTab 유효성 보정. 프리셋(통합 포함) 뷰는 자체 서브그래프이므로 제외.
+                // 프리셋(통합 포함) 뷰는 자체 서브그래프라 selectedTab 보정 대상 아님
                 if (!CurrentKey.IsPreset)
                 {
                     var currentSub = ResearchGraph.Instance.GetSubGraph(CurrentKey);
@@ -117,7 +115,6 @@ namespace YART
                 }
             }
 
-            // 2행: 검색창 (탭 행이 있으면 그 아래, 없으면 맨 위 자리)
             float searchY = hasTabRow ? y1 + Constraints.TabDropdownHeight + 6f : y1;
             Rect searchRect = new Rect(x0, searchY, Constraints.SearchBoxWidth, searchH);
             DoSearchBox(searchRect);
@@ -204,7 +201,7 @@ namespace YART
                 Widgets.DrawHighlight(rect);
             }
 
-            // 1행: 채널명 (+ 큐 수) — 큐 배지가 있으면 nameRect 오른쪽을 줄여 겹침 방지
+            // 큐 배지가 있으면 겹치지 않게 이름 폭을 줄임
             Rect nameRect = new Rect(rect.x + TrackChipPad, rect.y + TrackChipPad - 1f,
                 rect.width - TrackChipPad * 2 - (queueCount > 0 ? 30f : 0f), 18f);
             using (Temporary.Font(GameFont.Tiny))
@@ -217,7 +214,6 @@ namespace YART
 
             string tooltip = DrawTrackChipStatusRow(rect, channel, current, queue);
 
-            // 진행바 (하단)
             if (current != null)
             {
                 Rect track = new Rect(rect.x + 1f, rect.yMax - 4f, rect.width - 2f, 3f);
@@ -230,17 +226,16 @@ namespace YART
             if (channel.Tooltip != null) tooltip = tooltip == null ? channel.Tooltip : tooltip + "\n\n" + channel.Tooltip;
             if (tooltip != null) TooltipHandler.TipRegion(rect, tooltip);
 
-            // 프리셋 에디터가 열려 있는 동안에는 트랙(채널) 전환 금지 — 프리뷰 맥락 유지
+            // 프리셋 에디터가 열려 있으면 프리뷰 유지를 위해 채널 전환 금지
             if (!Widgets.ButtonInvisible(rect) || Find.WindowStack.IsOpen<Dialog_PresetEditor>()) return;
 
-            // 통합 뷰 ON + 벤치 칩 클릭 → 통합 키로 전환 (일반 탭 키로 돌아가지 않게).
+            // 통합 뷰가 켜져 있으면 일반 탭 키가 아니라 통합 키로
             if (YARTMod.Settings.unifiedBenchView && channel.IsBench && EnsureUnifiedBenchGraph())
                 SwitchGraph(GraphKey.UnifiedBench);
             else
                 SwitchGraph(new GraphKey(channel, selectedTab));
         }
 
-        /// <summary>칩 우상단의 둥근 큐 개수 배지.</summary>
         private static void DrawTrackChipQueuePill(Rect rect, Color trackColor, int queueCount)
         {
             using (Temporary.Font(GameFont.Small))
@@ -250,7 +245,7 @@ namespace YART
                 float pillW = Mathf.Max(pillH, Text.CalcSize(countText).x + 10f);
                 Rect pillRect = new Rect(rect.xMax - TrackChipPad - pillW, rect.y + TrackChipPad - 1f, pillW, pillH);
 
-                // 둥근 pill 배경 (GUI.DrawTexture의 borderRadius 오버로드 — 게임 동봉 Unity 모듈에서 시그니처 확인됨)
+                // borderRadius 오버로드는 게임 동봉 Unity 모듈에서 시그니처 확인함
                 GUI.DrawTexture(pillRect, BaseContent.WhiteTex, ScaleMode.StretchToFill, true, 0f,
                     GenColor.WithAlpha(trackColor, 0.30f), 0f, pillH / 2f);
 
@@ -262,9 +257,7 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 칩 2행: 진행 중 연구 / 막힌 큐 머리(자물쇠) / 유휴. 상태 툴팁이 있으면 반환한다.
-        /// </summary>
+        /// <summary>상태 툴팁이 있으면 반환</summary>
         private static string DrawTrackChipStatusRow(Rect rect, ResearchChannel channel,
             ResearchProjectDef current, IReadOnlyList<ResearchProjectDef> queue)
         {
@@ -282,7 +275,7 @@ namespace YART
             }
             else if (queue != null && queue.Count > 0)
             {
-                // 머리가 막혀 있음 (크로스트랙 선행, 벤치 부재 등)
+                // 큐 머리가 막힘 (다른 트랙 선행, 벤치 없음 등)
                 waiting = true;
                 statusText = queue[0].LabelCap;
                 statusColor = new Color(0.95f, 0.8f, 0.35f);
@@ -323,7 +316,6 @@ namespace YART
                 Widgets.DrawHighlight(rect);
             }
 
-            // 체크 아이콘 (ON) 또는 빈 박스 아이콘 영역 (OFF)
             float iconSize = 14f;
             Rect iconRect = new Rect(rect.x + 6f, rect.y + (rect.height - iconSize) / 2f, iconSize, iconSize);
             if (isOn)
@@ -336,7 +328,6 @@ namespace YART
                 GUIDrawingUtilities.DrawBorderLines(iconRect, Constraints.PanelBorder, 1f);
             }
 
-            // 라벨
             Rect labelRect = new Rect(rect.x + iconSize + 10f, rect.y, rect.width - iconSize - 14f, rect.height);
             using (Temporary.Font(GameFont.Small))
             using (Temporary.Anchor(TextAnchor.MiddleLeft))
@@ -351,14 +342,13 @@ namespace YART
 
             if (isOn)
             {
-                // OFF로: 마지막으로 보던 탭으로 복귀
+                // 마지막으로 보던 탭으로 복귀
                 YARTMod.Settings.unifiedBenchView = false;
                 YARTMod.Settings.Write();
                 SwitchGraph(new GraphKey(ChannelRegistry.Bench, selectedTab));
             }
             else if (EnsureUnifiedBenchGraph())
             {
-                // ON으로: 통합 서브그래프를 확보한 경우에만 설정을 켠다
                 YARTMod.Settings.unifiedBenchView = true;
                 YARTMod.Settings.Write();
                 SwitchGraph(GraphKey.UnifiedBench);
@@ -404,7 +394,6 @@ namespace YART
                 BuildTabDropdownOptions(tabs, currentTab)));
         }
 
-        /// <summary>드롭다운 항목: 위쪽에 프리셋(편집·삭제 버튼 포함), 아래쪽에 일반 연구 탭.</summary>
         private List<SearchableFloatMenu.Option> BuildTabDropdownOptions(
             List<ResearchTabDef> tabs, ResearchTabDef currentTab)
         {
@@ -440,7 +429,7 @@ namespace YART
             return options;
         }
 
-        // ── 즐겨찾기 퀵리스트─────────────────────────────
+        #region 즐겨찾기 퀵리스트
 
         private Rect ComputeFavoritesRect(Rect inRect)
         {
@@ -509,6 +498,8 @@ namespace YART
                 () => Favorites.Has(favKey), () => Favorites.Toggle(favKey),
                 Assets.IconStar, Assets.IconStarHollow, Favorites.OnColor, Favorites.OffColor);
         }
+
+        #endregion
 
         private void DrawAddPresetButton(Rect rect)
         {

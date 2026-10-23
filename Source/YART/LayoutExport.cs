@@ -8,24 +8,19 @@ using YART.Data;
 
 namespace YART
 {
-    /// <summary>
-    /// 그래프 빌드 시 각 서브그래프의 RAW 구조(실노드+실엣지, 더미/랭크 생성 이전)를 메모리에 캡처하고,
-    /// 모드 설정의 개발자 버튼을 누르면 바탕화면으로 JSON export한다 — 게임 없이 오프라인 레이아웃 하니스
-    /// (Source/LayoutHarness)에서 알고리즘을 반복하기 위함. DevMode에서만 캡처/노출.
-    /// 캡처: SugiyamaLayout.Calculate 최상단(레이아웃 전), Begin: GraphBuildPipeline.RunLayoutAndSearch 시작.
-    /// </summary>
+    /// <summary>DevMode에서 레이아웃 전 raw 그래프를 캡처해 오프라인 하니스(Source/LayoutHarness)용 JSON으로 내보냄</summary>
     public static class LayoutExport
     {
         private static readonly object _lock = new object();
         private static readonly List<string> _graphs = new List<string>(); // 그래프별 JSON 조각
 
-        /// <summary>빌드 시작 시 버퍼 초기화 (재생성 누적 방지).</summary>
+        /// <summary>빌드 시작 시 호출해 재생성 때 누적되지 않게 함</summary>
         public static void Begin()
         {
             lock (_lock) _graphs.Clear();
         }
 
-        /// <summary>한 서브그래프의 raw 구조 캡처 (Calculate 최상단 = 더미/랭크 생성 이전). DevMode 전용, 스레드 안전.</summary>
+        /// <summary>Calculate 맨 앞, 더미/랭크 생성 전에 호출. 스레드 안전</summary>
         public static void Capture(ResearchSubGraph graph)
         {
             if (!Prefs.DevMode || graph == null) return;
@@ -48,7 +43,7 @@ namespace YART
             first = true;
             foreach (var e in graph.Edges)
             {
-                if (e.From.IsDummy || e.To.IsDummy) continue; // raw 단계엔 더미 없지만 방어
+                if (e.From.IsDummy || e.To.IsDummy) continue; // raw 단계엔 더미가 없지만 방어용
                 if (!first) sb.Append(',');
                 first = false;
                 sb.Append("{\"from\":").Append(JsonStr(e.From.Id))
@@ -59,10 +54,9 @@ namespace YART
             lock (_lock) _graphs.Add(sb.ToString());
         }
 
-        /// <summary>캡처된 모든 그래프를 바탕화면의 YART_layout_graph.json으로 쓴다 (DevMode 설정 버튼에서 호출).</summary>
         public static void WriteToDesktop()
         {
-            // 캡처 버퍼가 비었으면(빌드 시 DevMode가 꺼져 있었으면) 동기 리빌드로 채운다 — 버튼이 DevMode 전용이라 Capture 동작.
+            // 빌드 때 DevMode가 꺼져 있었으면 버퍼가 비어 있으니 리빌드로 채운다
             bool empty;
             lock (_lock) empty = _graphs.Count == 0;
             if (empty) GraphBuildPipeline.RebuildNow();
@@ -82,7 +76,9 @@ namespace YART
                     if (i > 0) sb.Append(',');
                     sb.Append(_graphs[i]);
                 }
-                sb.Append("]}");
+                sb.Append("],\"input\":");
+                AppendInput(sb);
+                sb.Append('}');
                 json = sb.ToString();
             }
 
@@ -101,6 +97,71 @@ namespace YART
                 Log.Warning("[YART] Layout export failed: " + ex.Message);
             }
         }
+
+        /// <summary>하네스가 이것만으로 서브그래프를 재구성할 수 있어야 함</summary>
+        private static void AppendInput(StringBuilder sb)
+        {
+            var graph = ResearchGraph.Instance;
+            var specs = graph.Topology?.Specs;
+
+            sb.Append("{\"includeHidden\":").Append(graph.BuiltWithHiddenPrereqs == true ? "true" : "false");
+            sb.Append(",\"specs\":[");
+            if (specs != null)
+            {
+                for (int i = 0; i < specs.Count; i++)
+                {
+                    var s = specs[i];
+                    if (i > 0) sb.Append(',');
+                    sb.Append("{\"id\":").Append(JsonStr(s.Id))
+                      .Append(",\"label\":").Append(JsonStr(s.Label))
+                      .Append(",\"tech\":").Append(s.TechLevel)
+                      .Append(",\"channel\":").Append(JsonStr(s.ChannelId))
+                      .Append(",\"bench\":").Append(s.ChannelIsBench ? "true" : "false")
+                      .Append(",\"tab\":").Append(JsonStrOrNull(s.TabId))
+                      .Append(",\"sourceTab\":").Append(JsonStrOrNull(s.SourceTab))
+                      .Append(",\"prereqs\":");
+                    AppendStrArray(sb, s.Prereqs);
+                    sb.Append(",\"hiddenPrereqs\":");
+                    AppendStrArray(sb, s.HiddenPrereqs);
+                    sb.Append('}');
+                }
+            }
+            sb.Append("],\"presets\":[");
+            var presets = YARTMod.Settings?.tabPresets;
+            if (presets != null)
+            {
+                bool first = true;
+                foreach (var p in presets)
+                {
+                    if (p == null) continue;
+                    if (!first) sb.Append(',');
+                    first = false;
+                    sb.Append("{\"id\":").Append(JsonStr(p.Id))
+                      .Append(",\"name\":").Append(JsonStr(p.Name))
+                      .Append(",\"allBenchTabs\":").Append(p.IncludeAllBenchTabs ? "true" : "false")
+                      .Append(",\"tabs\":");
+                    AppendStrArray(sb, p.TabDefNames?.ToArray());
+                    sb.Append('}');
+                }
+            }
+            sb.Append("]}");
+        }
+
+        private static void AppendStrArray(StringBuilder sb, string[] items)
+        {
+            sb.Append('[');
+            if (items != null)
+            {
+                for (int i = 0; i < items.Length; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append(JsonStr(items[i]));
+                }
+            }
+            sb.Append(']');
+        }
+
+        private static string JsonStrOrNull(string s) => s == null ? "null" : JsonStr(s);
 
         private static string JsonStr(string s)
         {

@@ -14,6 +14,7 @@
   <ItemGroup>
     <Compile Include="..\YART\SugiyamaLayout.cs" Link="_linked\SugiyamaLayout.cs" />
     <Compile Include="..\YART\Data\Constraints.cs" Link="_linked\Constraints.cs" />
+    <Compile Include="..\YART\Data\GraphTopology.cs" Link="_linked\GraphTopology.cs" />
   </ItemGroup>
 
 </Project>

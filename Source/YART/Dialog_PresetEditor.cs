@@ -9,16 +9,14 @@ using YART.Utils;
 
 namespace YART
 {
-    /// <summary>
-    /// 사용자 탭 그룹(프리셋) 생성/편집 창.
-    /// </summary>
+    /// <summary>사용자 탭 그룹(프리셋) 편집 창</summary>
     public class Dialog_PresetEditor : Window
     {
         private const string NameControl = "YARTPresetName";
 
         private readonly MainTabWindow_YART owner;
-        private readonly ResearchPreset editing; // null = 신규 생성
-        private readonly GraphKey restoreKey; // 열 때의 뷰 — 닫을 때 복원
+        private readonly ResearchPreset editing; // null이면 새로 만듦
+        private readonly GraphKey restoreKey; // 닫을 때 이 뷰로 복원
 
         private string presetName;
         private readonly HashSet<string> selected = new HashSet<string>();
@@ -66,7 +64,6 @@ namespace YART
             }
             y += 40f;
 
-            // 이름
             using (Temporary.Anchor(TextAnchor.MiddleLeft))
             {
                 Widgets.Label(new Rect(inRect.x, y, 56f, 28f), "YART_Preset_Name".Translate());
@@ -119,7 +116,6 @@ namespace YART
                     SoundDefOf.Click.PlayOneShotOnCamera();
                 }
 
-                // 라벨
                 Rect labelRect = new Rect(checkRect.xMax + 6f, row.y, eyeRect.x - checkRect.xMax - 10f, rowH);
                 using (Temporary.Anchor(TextAnchor.MiddleLeft))
                 {
@@ -134,12 +130,12 @@ namespace YART
             }
             Widgets.EndScrollView();
 
-            // 하단 버튼: 완료 / 취소
+            // 하단 버튼
             float btnY = inRect.yMax - 34f;
             float btnW = (inRect.width - 8f) / 2f;
             bool canDone = !presetName.NullOrEmpty() && selected.Count > 0;
 
-            // 비활성 시 회색으로 — 클릭 자체도 막힘(active:false)
+            // 비활성이면 흐리게. 클릭은 active:false가 막음
             var prevColor = GUI.color;
             if (!canDone) GUI.color = new Color(1f, 1f, 1f, 0.4f);
             bool donePressed = Widgets.ButtonText(new Rect(inRect.x, btnY, btnW, 32f),

@@ -12,10 +12,10 @@ from PIL import Image, ImageDraw
 OUT = Path(__file__).resolve().parents[3] / "Textures" / "YART"
 OUT.mkdir(parents=True, exist_ok=True)
 
-# 고정 시드 (재생성해도 동일한 노이즈)
+# 재생성해도 같은 노이즈가 나오게
 random.seed(20260610)
 
-SS = 4  # 슈퍼샘플링 배율 (안티앨리어싱)
+SS = 4  # 안티앨리어싱용 슈퍼샘플링 배율
 
 
 def save(img: Image.Image, name: str):
@@ -188,10 +188,10 @@ def draw_swap(d, s):
     """전환 아이콘: 상단=오른쪽 화살표, 하단=왼쪽 화살표 (두 화살표로 swap 표현)."""
     u = s / 32
     w = int(3 * u)
-    # 상단 → 오른쪽
+    # 위: 오른쪽 화살표
     d.line([8 * u, 12 * u, 22 * u, 12 * u], fill=255, width=w)
     d.polygon([22 * u, 7 * u, 22 * u, 17 * u, 28 * u, 12 * u], fill=255)
-    # 하단 ← 왼쪽
+    # 아래: 왼쪽 화살표
     d.line([10 * u, 20 * u, 24 * u, 20 * u], fill=255, width=w)
     d.polygon([10 * u, 15 * u, 10 * u, 25 * u, 4 * u, 20 * u], fill=255)
 

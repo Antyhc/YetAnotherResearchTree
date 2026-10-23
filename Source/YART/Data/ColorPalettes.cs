@@ -69,7 +69,6 @@ namespace YART.Data
             prereqUnmet = Hex(0xD5, 0x5E, 0x00),
         };
 
-        // 휘도 정렬
         private static readonly ColorPalette LumOrdered = new ColorPalette
         {
             era = new[]

@@ -10,9 +10,6 @@ using Verse;
 
 namespace YART.Compat
 {
-    /// <summary>
-    /// Stored Research 호환 어댑터
-    /// </summary>
     [StaticConstructorOnStartup]
     public static class StoredResearchCompat
     {

@@ -50,8 +50,8 @@ namespace YART
             public readonly string Label;
             public readonly Action Action;
             public readonly bool Selected;
-            public readonly List<TrailingButton> Trailing; // 행 우측 액션 아이콘 (편집/삭제 등), null이면 없음
-            public readonly LeadingToggle Leading;          // 행 좌측 토글 (즐겨찾기 별), null이면 없음
+            public readonly List<TrailingButton> Trailing; // 행 오른쪽 아이콘(편집, 삭제 등)
+            public readonly LeadingToggle Leading;          // 행 왼쪽 토글(즐겨찾기 별)
 
             public Option(string label, Action action, bool selected = false,
                 List<TrailingButton> trailing = null, LeadingToggle leading = null)
@@ -215,7 +215,7 @@ namespace YART
             Widgets.EndScrollView();
         }
 
-        /// <summary>한 행을 그리고 라벨 영역이 클릭됐는지 반환. 아이콘 클릭은 ref 액션으로 전달.</summary>
+        /// <summary>라벨 클릭 여부를 반환. 아이콘 클릭은 ref 액션으로 전달</summary>
         private static bool DrawRow(Rect rowRect, Option option, ref Action trailingAction, ref Action leadingAction)
         {
             if (Mouse.IsOver(rowRect)) Widgets.DrawHighlight(rowRect);
@@ -237,7 +237,7 @@ namespace YART
             return Widgets.ButtonInvisible(selectRect);
         }
 
-        /// <summary>좌측 토글을 그리고 라벨이 피해야 할 폭을 반환.</summary>
+        /// <summary>라벨이 비켜야 할 폭을 반환</summary>
         private static float DrawLeadingToggle(Rect rowRect, LeadingToggle leading, ref Action leadingAction)
         {
             if (leading == null) return 0f;
@@ -253,7 +253,7 @@ namespace YART
             return btn + 8f;
         }
 
-        /// <summary>우측 액션 아이콘들을 그리고 라벨이 피해야 할 폭을 반환.</summary>
+        /// <summary>라벨이 비켜야 할 폭을 반환</summary>
         private static float DrawTrailingButtons(Rect rowRect, List<TrailingButton> trailing, ref Action trailingAction)
         {
             if (trailing == null || trailing.Count == 0) return 0f;

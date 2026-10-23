@@ -9,9 +9,7 @@ using YART.Utils;
 
 namespace YART
 {
-    /// <summary>
-    /// 바닐라 연구창에 YART로 전환하는 아이콘 버튼을 우하단에 덧그린다.
-    /// </summary>
+    /// <summary>바닐라 연구창 우하단에 YART 전환 버튼을 그림</summary>
     [HarmonyPatch(typeof(MainTabWindow_Research), nameof(MainTabWindow_Research.DoWindowContents))]
     public static class MainTabWindow_Research_DoWindowContents_Patch
     {
@@ -30,8 +28,8 @@ namespace YART
         }
     }
 
-    // YART가 연구 탭을 대체하면 바닐라의 (MainTabWindow_Research) 캐스트가 실패하므로,
-    // 아래 세 지점에서는 InvalidCastException만 삼킨다.
+    // 연구 탭이 YART로 바뀌면 바닐라의 (MainTabWindow_Research) 캐스트가 실패해서
+    // 아래 세 곳은 InvalidCastException만 삼킨다
 
     [HarmonyPatch(typeof(Alert_NeedResearchProject), "OnClick")]
     public static class Alert_NeedResearchProject_OnClick_Patch
@@ -54,9 +52,7 @@ namespace YART
             => __exception is InvalidCastException ? null : __exception;
     }
 
-    /// <summary>
-    /// InfoCard의 연구 하이퍼링크는 해당 연구로 점프까지 시킨다.
-    /// </summary>
+    /// <summary>InfoCard의 연구 링크를 누르면 YART에서 그 연구로 이동</summary>
     [HarmonyPatch(typeof(Dialog_InfoCard.Hyperlink), "ActivateHyperlink")]
     public static class Dialog_InfoCard_Hyperlink_ActivateHyperlink_Patch
     {
@@ -84,14 +80,10 @@ namespace YART
         }
     }
 
-    /// <summary>
-    /// 연구 큐 자동 진행을 위한 바닐라 ResearchManager 훅.
-    /// 설정이 켜져 있으면 완료 시 바닐라 모달 창(Dialog_NodeTree) 대신 전용 알림 편지를 보낸다.
-    /// </summary>
+    /// <summary>큐 자동 진행 훅. 설정에 따라 완료 창(Dialog_NodeTree) 대신 편지를 보냄</summary>
     [HarmonyPatch(typeof(ResearchManager), nameof(ResearchManager.FinishProject))]
     public static class ResearchManager_FinishProject_Patch
     {
-        // 창을 띄우려던 호출이면 doCompletionDialog만 꺼서 가로채고, 억제 여부를 __state로 Postfix에 넘긴다
         public static void Prefix(ResearchProjectDef proj, ref bool doCompletionDialog, out bool __state)
         {
             __state = doCompletionDialog && proj != null && YARTMod.Settings.completionLetterInsteadOfDialog;
@@ -126,7 +118,6 @@ namespace YART
                 body.Append("\n\n").Append("YART_NextInQueue".Translate(next.LabelCap));
             }
 
-            // 다음 연구가 있으면 PositiveEvent, 없으면 NeutralEvent
             var letterDef = next != null
                 ? YARTLetterDefOf.YART_ResearchCompleted
                 : YARTLetterDefOf.YART_ResearchCompletedNeutral;

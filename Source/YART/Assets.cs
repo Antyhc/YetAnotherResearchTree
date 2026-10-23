@@ -3,9 +3,7 @@ using Verse;
 
 namespace YART
 {
-    /// <summary>
-    /// tools/generate_assets.py로부터 생성됨
-    /// </summary>
+    /// <summary>tools/generate_assets.py로 만든 텍스처</summary>
     [StaticConstructorOnStartup]
     public static class Assets
     {

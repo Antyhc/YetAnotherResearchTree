@@ -72,9 +72,7 @@ namespace YART.Data
         public IReadOnlyList<ResearchProjectDef> GetQueue(ResearchChannel channel) => GetOrAddQueue(channel);
 
 
-        /// <summary>
-        /// 채널 내 1-기준 큐 순번. 큐에 없으면 -1.
-        /// </summary>
+        /// <summary>1부터 시작, 큐에 없으면 -1</summary>
         public int GetQueuePosition(ResearchProjectDef def)
         {
             if (def == null) return -1;
@@ -92,15 +90,12 @@ namespace YART.Data
             return ResearchNode.DetermineChannel(def);
         }
 
-        /// <summary>채널의 현재 진행 중인 프로젝트.</summary>
         public static ResearchProjectDef GetCurrentProject(ResearchChannel channel)
         {
             return channel.CurrentProject;
         }
 
-        /// <summary>
-        /// def 자신 + 미완료 선행 연구(hidden 포함) 전체를 선행-우선(위상) 순서로 반환합니다.
-        /// </summary>
+        /// <summary>def와 미완료 선행 전체(hidden 포함)를 위상 순서로</summary>
         public static List<ResearchProjectDef> CollectMissingChain(ResearchProjectDef def)
         {
             var result = new List<ResearchProjectDef>();
@@ -124,9 +119,7 @@ namespace YART.Data
             return result;
         }
 
-        /// <summary>
-        /// def와 미완료 선행 체인을 각자의 채널 큐 끝에 추가합니다. (UI 진입점)
-        /// </summary>
+        /// <summary>체인의 각 연구는 자기 채널 큐로 들어감</summary>
         public void EnqueueWithChain(ResearchProjectDef def)
         {
             if (def == null || def.IsFinished) return;
@@ -135,9 +128,6 @@ namespace YART.Data
             DoEnqueue(def, toFront: false);
         }
 
-        /// <summary>
-        /// def와 미완료 선행 체인을 각자의 채널 큐 "앞쪽"에 선행-우선 순서로 삽입합니다. (UI 진입점)
-        /// </summary>
         public void EnqueueWithChainToFront(ResearchProjectDef def)
         {
             if (def == null || def.IsFinished) return;
@@ -161,7 +151,7 @@ namespace YART.Data
 
             if (oldHeads != null) StartChangedHeads(oldHeads);
 
-            // 큐 추가의 시작 사운드는 여기서 한 번만 재생 — 머리 시작(BeginProject)은 무음으로 두어 이중 재생 방지.
+            // 사운드는 여기서 한 번만 재생. 머리 시작(BeginProject)은 무음이어야 두 번 안 울림
             TryStartAllHeads(playSound: false);
             MultiplayerCompat.PlayActionSound(SoundDefOf.ResearchStart);
         }
@@ -175,9 +165,7 @@ namespace YART.Data
             }
         }
 
-        /// <summary>
-        /// 체인을 채널별로 묶어 각 큐 앞쪽에 선행-우선 순서로 삽입. 반환값 = 삽입 전 채널별 머리.
-        /// </summary>
+        /// <summary>삽입 전 채널별 머리를 반환</summary>
         private Dictionary<ResearchChannel, ResearchProjectDef> InsertChainAtFront(ResearchProjectDef def)
         {
             var byChannel = new Dictionary<ResearchChannel, List<ResearchProjectDef>>();
@@ -203,7 +191,7 @@ namespace YART.Data
             return oldHeads;
         }
 
-        /// <summary>머리가 바뀐 채널을 새 머리로 전환 (사운드는 호출부가 일괄 재생).</summary>
+        /// <summary>사운드는 호출부가 한 번에 재생</summary>
         private void StartChangedHeads(Dictionary<ResearchChannel, ResearchProjectDef> oldHeads)
         {
             foreach (var kvp in oldHeads)
@@ -244,9 +232,7 @@ namespace YART.Data
             DoEnqueue(def, toFront: false); // 비운 뒤라 앞/끝 무관
         }
 
-        /// <summary>
-        /// 채널 큐를 비웁니다. 이 채널에서 진행 중이던 연구도 중단합니다 (UI 진입점)
-        /// </summary>
+        /// <summary>진행 중이던 연구도 중단</summary>
         public void ClearQueue(ResearchChannel channel)
         {
             if (channel == null) return;
@@ -267,13 +253,11 @@ namespace YART.Data
             ResearchNode.InvalidateAllStates();
         }
 
-        /// <summary>
-        /// 큐 머리로 옮기고 즉시 시작합니다. (UI 진입점)
-        /// </summary>
+        /// <summary>큐 머리로 옮겨서 시작</summary>
         public void StartNow(ResearchProjectDef def)
         {
             if (def == null || !def.CanStartNow) return;
-            // Semi Random Research가 활성이면 수동 시작 차단 — 선택은 그 모드의 'Next Research' 탭이 담당.
+            // Semi Random Research 활성 시 선택은 그 모드의 'Next Research' 탭이 담당
             if (SemiRandomResearchCompat.Active) return;
             if (MultiplayerCompat.TryStartNow(def)) return;
             DoStartNow(def);
@@ -289,9 +273,6 @@ namespace YART.Data
             TryBeginProject(def, playSound: true);
         }
 
-        /// <summary>
-        /// 큐에서 제거합니다. (UI 진입점)
-        /// </summary>
         public void Remove(ResearchProjectDef def)
         {
             if (def == null) return;
@@ -323,9 +304,6 @@ namespace YART.Data
             TryStartAllHeads(playSound: false);
         }
 
-        /// <summary>
-        /// 큐 바 드래그 재정렬 (UI 진입점)
-        /// </summary>
         public void Reorder(ResearchChannel channel, ResearchProjectDef def, int targetIndex)
         {
             if (channel == null || def == null) return;
@@ -345,7 +323,7 @@ namespace YART.Data
             var newHead = HeadOf(q);
             if (ShouldSwitchHead(newHead, oldHead))
             {
-                // 채널을 새 머리로 전환 (SetCurrentProject가 기존 프로젝트를 대체)
+                // SetCurrentProject가 기존 프로젝트를 대체함
                 TryBeginProject(newHead, playSound: true);
             }
             else
@@ -354,9 +332,6 @@ namespace YART.Data
             }
         }
 
-        /// <summary>
-        /// 모든 채널에 대해: 채널이 비어 있고 큐 머리가 시작 가능하면 시작
-        /// </summary>
         public void TryStartAllHeads(bool playSound)
         {
             if (Current.ProgramState != ProgramState.Playing) return;
@@ -369,20 +344,16 @@ namespace YART.Data
                 if (GetCurrentProject(kvp.Key) != null) continue;
 
                 var head = q[0];
-                if (!head.CanStartNow) continue; // 막힌 머리는 스킵하지 않고 대기 (UI에 표시)
+                if (!head.CanStartNow) continue; // 막힌 머리는 건너뛰지 않고 대기 (UI에 표시)
 
                 TryBeginProject(head, playSound);
             }
         }
 
-        /// <summary>
-        /// 시작 전에 바닐라(MainTabWindow_Research.AttemptBeginResearch)와 동일한
-        /// Ideology 밈 충돌 검사를 수행합니다. 충돌이 있으면 확인 다이얼로그를 띄우고,
-        /// 확인 시 시작 / 취소 시 큐에서 제거합니다.
-        /// </summary>
+        /// <summary>바닐라 AttemptBeginResearch와 같은 밈 충돌 확인. 취소하면 큐에서 제거</summary>
         private void TryBeginProject(ResearchProjectDef proj, bool playSound)
         {
-            // 멀티플레이 중일 경우 우선 시작 후 이후에 밈 충돌 검사
+            // 멀티플레이에선 먼저 시작하고 밈 충돌은 나중에 검사
             if (MultiplayerCompat.InMultiplayer)
             {
                 BeginProject(proj, playSound);
@@ -429,9 +400,7 @@ namespace YART.Data
             return sb.ToString();
         }
 
-        /// <summary>
-        /// 바닐라 MainTabWindow_Research.ComputeUnlockedDefsThatHaveMissingMemes와 동일
-        /// </summary>
+        /// <summary>바닐라 MainTabWindow_Research의 같은 이름 메서드와 동일</summary>
         internal static List<(BuildableDef, List<string>)> ComputeUnlockedDefsThatHaveMissingMemes(ResearchProjectDef project)
         {
             var result = new List<(BuildableDef, List<string>)>();
@@ -479,7 +448,7 @@ namespace YART.Data
             ResearchNode.InvalidateAllStates();
         }
 
-        /// <summary>바닐라 StopProject 경유 중단 — 자기 자신이 유발한 포스트픽스의 재진입을 막는다.</summary>
+        /// <summary>자기가 부른 StopProject의 포스트픽스 재진입을 막음</summary>
         private void StopProjectSuppressed(ResearchProjectDef proj)
         {
             suppressSync = true;
@@ -497,13 +466,10 @@ namespace YART.Data
         public void Notify_ProjectStopped(ResearchProjectDef proj)
         {
             if (suppressSync) return;
-            // 외부(바닐라/타 모드) StopProject 반응 — 이미 결정론적 컨텍스트이므로 코어를 직접 호출(재-sync 금지).
+            // 외부(바닐라/타 모드) StopProject에 반응. 이미 결정론적 컨텍스트라 재sync 없이 코어를 직접 호출
             DoRemove(proj);
         }
 
-        /// <summary>
-        /// 외부에서 바뀐 경우 반영
-        /// </summary>
         public void Notify_CurrentProjectChanged(ResearchProjectDef proj)
         {
             if (suppressSync || proj == null || proj.IsFinished) return;
@@ -514,10 +480,7 @@ namespace YART.Data
             ResearchNode.InvalidateAllStates();
         }
 
-        /// <summary>
-        /// 큐 내 항목들이 "미완료 선행은 항상 앞"이 되도록 위상 정렬합니다.
-        /// (기존 큐 순서를 우선순위로 보존)
-        /// </summary>
+        /// <summary>기존 큐 순서를 최대한 유지하는 위상 정렬</summary>
         private void EnsureTopologicalOrder(ResearchChannel channel)
         {
             var q = GetOrAddQueue(channel);

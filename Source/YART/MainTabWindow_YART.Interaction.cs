@@ -8,12 +8,8 @@ using YART.Data;
 
 namespace YART
 {
-    // 캔버스 상호작용 의미론: 노드 클릭(선택/큐/프록시 점프), 호버 포커스 모드
     public partial class MainTabWindow_YART
     {
-        /// <summary>
-        /// 마우스 좌표 아래의 노드를 찾는다 (더미 제외, 컬링된 노드는 히트 대상 아님). 없으면 null.
-        /// </summary>
         private ResearchNode NodeAtMouse(ResearchSubGraph graph, Vector2 offset, float zoom,
             Vector2 mousePos, out Rect nodeRectScreen)
         {
@@ -42,15 +38,15 @@ namespace YART
                 return;
             }
 
-            // 사운드는 각 Enqueue 내부(ResearchStart)에서 처리한다.
+            // 사운드는 각 Enqueue 내부에서 냄
             if (Event.current.control) mgr.EnqueueWithChainExclusive(target.Def); // 체인이 닿는 채널을 비우고 이 체인만 남김
-            else if (Event.current.alt) mgr.EnqueueWithChainToFront(target.Def);  // 진행 중 연구를 밀어내고 맨 앞에 삽입
-            else mgr.EnqueueWithChain(target.Def);                                // 큐 끝에 추가 (미완료 선행 체인 포함)
+            else if (Event.current.alt) mgr.EnqueueWithChainToFront(target.Def); // 진행 중 연구도 밀어냄
+            else mgr.EnqueueWithChain(target.Def);
         }
 
         private void HandleNodeInteraction(ResearchSubGraph graph, Vector2 offset, float zoom)
         {
-            // HandleInput에서 "드래그 없는 좌클릭"으로 판별된 경우에만 진입 (MouseUp 시점)
+            // HandleInput이 드래그 없는 좌클릭으로 판별한 경우만 (MouseUp 시점)
             if (!clickPending) return;
             clickPending = false;
             if (IsMouseOverBlockingElement()) return;
@@ -66,7 +62,7 @@ namespace YART
             {
                 searchDropdownClosed = true;
                 searchResultsRect = Rect.zero;
-                GUI.FocusControl(null); // Help/자동완성 패널은 포커스 조건 — 외부 클릭 시 닫히도록 해제
+                GUI.FocusControl(null); // Help/자동완성 패널은 포커스가 있어야 열려 있으므로 해제해서 닫음
                 Event.current.Use();
             }
             else if (history.HasCurrent)
@@ -76,12 +72,11 @@ namespace YART
             }
         }
 
-        /// <summary>노드 좌클릭 처리. 프록시는 원본 노드를 대상으로 삼는다.</summary>
         private void HandleNodeClick(ResearchNode node)
         {
             var target = node.IsProxy ? node.OriginalNode : node;
 
-            // 미발견(IsHidden) 연구는 바닐라처럼 상호작용 불가 (정보 마스킹)
+            // 미발견 연구는 바닐라처럼 상호작용 불가
             if (target.IsHidden)
             {
                 Event.current.Use();
@@ -99,23 +94,19 @@ namespace YART
             {
                 history.Push(target);
                 leftPanelScrollPosition = Vector2.zero;
-                SoundDefOf.Click.PlayOneShotOnCamera(); // 노드 선택 (바닐라 연구 목록과 동일)
+                SoundDefOf.Click.PlayOneShotOnCamera(); // 바닐라 연구 목록과 같은 소리
             }
 
-            // 프록시 클릭 = 원본 노드가 속한 그래프로 전환 + 포커스
             if (node.IsProxy)
             {
-                SwitchGraph(target.Key, playSound: false); // 노드 선택 Click으로 통일
+                SwitchGraph(target.Key, playSound: false); // 소리는 위의 Click 하나로
                 FocusOnNode(target);
             }
 
             Event.current.Use();
         }
 
-        /// <summary>
-        /// 노드 우클릭 컨텍스트 메뉴: Start now / Stop / Queue / Unqueue / 원본 그래프로 / 인포 카드.
-        /// 좌측 패널 버튼과 동일한 의미론 (시작·중단은 바닐라 API 경유).
-        /// </summary>
+        /// <summary>좌측 패널 버튼과 같은 동작</summary>
         private void HandleNodeContextMenu(ResearchSubGraph graph, Vector2 offset, float zoom)
         {
             if (!rightClickPending) return;
@@ -127,10 +118,9 @@ namespace YART
             if (node == null) return;
 
             var target = node.IsProxy ? node.OriginalNode : node;
-            if (target.IsHidden) return; // 미발견 연구는 메뉴 없음 (정보 마스킹)
+            if (target.IsHidden) return; // 미발견 연구는 메뉴 없음
 
-            // 해금 아이콘 우클릭 = 해당 def InfoCard (대표 아이콘 또는 리치 스트립/"+n").
-            // 노드 컨텍스트 메뉴보다 우선 — 아이콘 위가 아니면 아래로 흘러 일반 메뉴.
+            // 해금 아이콘 위면 노드 메뉴보다 InfoCard 우선
             if (zoom >= Constraints.NodeTextMinZoom
                 && TryHandleUnlockIconRightClick(target, nodeRectScreen, zoom, mousePos))
             {
@@ -173,7 +163,7 @@ namespace YART
             }
             else if (queueMgr != null && target.State == ResearchNodeState.Available && !SemiRandomResearchCompat.Active)
             {
-                // Available일 때만 큐잉 (Locked는 불가 — 좌측 패널·Shift+클릭과 동일)
+                // Locked는 큐잉 불가. 좌측 패널, Shift+클릭과 같음
                 int chainCount = ResearchQueueManager.CollectMissingChain(def).Count;
                 options.Add(new FloatMenuOption(
                     chainCount > 1 ? "YART_QueueChain".Translate(chainCount) : "YART_Queue".Translate(),
@@ -190,24 +180,20 @@ namespace YART
             return options;
         }
 
-        /// <summary>
-        /// 리치카드 해금 아이콘 영역 우클릭 처리. 아이콘 위면 그 def의 InfoCard를,
-        /// "+n" 오버플로 위면 전체 해금 목록 FloatMenu를 연다. 처리하면 true.
-        /// 좌표 기하는 DrawRichCardContent와 공유(GetRichCardIconMetrics).
-        /// </summary>
+        /// <summary>"+n" 위면 나머지 해금 목록 메뉴. 좌표는 GetRichCardIconMetrics로 렌더와 공유</summary>
         private bool TryHandleUnlockIconRightClick(ResearchNode realNode, Rect nodeRectScreen, float zoom, Vector2 mousePos)
         {
             var unlocked = realNode.UnlockedDefs;
             if (unlocked.Count == 0) return false;
 
-            // 대표 아이콘 (좌측, NodeTextMinZoom 이상에서 표시 — 렌더와 동일 좌표)
+            // 대표 아이콘. NodeTextMinZoom 이상에서만 보임
             if (RepIconRect(nodeRectScreen, zoom).Contains(mousePos))
             {
                 Find.WindowStack.Add(new Dialog_InfoCard(unlocked[0]));
                 return true;
             }
 
-            // 리치 스트립 (리치 카드에서만; 대표 제외 index 1.. 최대 8개)
+            // 리치 스트립은 대표를 뺀 index 1부터
             if (GetRichCardLerp(zoom) > 0f && unlocked.Count > 1)
             {
                 GetRichCardIconMetrics(nodeRectScreen, zoom, hasRep: true,
@@ -245,12 +231,9 @@ namespace YART
             return false;
         }
 
-        /// <summary>
-        /// 호버 대상에 맞춰 포커스 모드 상태를 갱신한다.
-        /// </summary>
         private void UpdateFocusMode(ResearchSubGraph graph, Vector2 offset, float zoom)
         {
-            // 저줌에서는 성능을 위해 포커스 모드를 끈다
+            // 저줌에선 성능 때문에 끔
             if (zoom < 0.4f)
             {
                 hoveredNode = null;
@@ -260,28 +243,27 @@ namespace YART
 
             var newHoveredNode = queueBarHoveredDef != null ? GetNodeOnCurrentGraph(queueBarHoveredDef) : null;
 
-            // 패널 위에 마우스가 있으면 캔버스 호버로 치지 않는다
             if (newHoveredNode == null && !IsMouseOverBlockingElement())
             {
                 newHoveredNode = NodeAtMouse(graph, offset, zoom, Event.current.mousePosition, out _);
             }
 
-            // 호버가 없으면 선택 노드가 앵커 — 하이라이트가 계속 지속된다.
+            // 호버가 없으면 선택 노드 기준으로 하이라이트 유지
             if (newHoveredNode == null && history.HasCurrent)
             {
                 newHoveredNode = GetNodeOnCurrentGraph(history.Current.Def);
             }
 
-            if (newHoveredNode == hoveredNode) return; // 변한 게 없으면 집합 재구성 생략
+            if (newHoveredNode == hoveredNode) return;
 
             hoveredNode = newHoveredNode;
             focusedNodes.Clear();
             if (hoveredNode == null) return;
 
             focusedNodes.Add(hoveredNode);
-            // 상류: 선행 체인 전부 (완료 여부 무관 — 전체 의존 경로를 보여준다)
+            // 위로는 완료 여부와 무관하게 선행 체인 전부
             ResearchNode.CollectConnectedNodes(hoveredNode, focusedNodes, true, filter: null);
-            // 하류: 직속 후행만 (더미는 통과하되 첫 실노드에서 멈춤)
+            // 아래로는 직속 후행만. 더미는 통과
             ResearchNode.CollectConnectedNodes(hoveredNode, focusedNodes, false, filter: null,
                 recurseCondition: x => x.IsDummy);
         }

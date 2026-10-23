@@ -4,14 +4,11 @@ using Verse;
 
 namespace YART.Data
 {
-    /// <summary>
-    /// 서브그래프 식별자: 병렬 채널(Channel) + 바닐라 연구 탭(Tab),
-    /// 또는 사용자/내장 프리셋(병합 그래프)을 가리키는 PresetId.
-    /// </summary>
+    /// <summary>Channel + Tab, 또는 병합 그래프의 PresetId</summary>
     public readonly struct GraphKey : IEquatable<GraphKey>
     {
         /// <summary>통합 벤치 뷰 전용 id</summary>
-        public const string AllTabsId = "__yart_all__";
+        public const string AllTabsId = TopoKey.AllTabsId;
 
         public readonly ResearchChannel Channel;
         public readonly ResearchTabDef Tab;

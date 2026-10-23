@@ -8,9 +8,7 @@ using YART.Data;
 
 namespace YART.Compat
 {
-    /// <summary>
-    /// Vanilla Gravship Expanded 호환 어댑터
-    /// </summary>
+    /// <summary>Vanilla Gravship Expanded 호환</summary>
     public static class GravshipCompat
     {
         public static readonly Lazy<bool> IsVanillaGravshipExpandedLoaded = new Lazy<bool>(() =>
@@ -32,7 +30,6 @@ namespace YART.Compat
         }
     }
 
-    /// <summary>VGE Gravship 채널 어댑터</summary>
     public sealed class GravshipChannel : ResearchChannel
     {
         private string cachedLabel;

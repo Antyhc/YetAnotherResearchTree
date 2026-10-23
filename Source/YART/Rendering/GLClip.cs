@@ -2,9 +2,7 @@ using UnityEngine;
 
 namespace YART.Rendering
 {
-    /// <summary>
-    /// https://en.wikipedia.org/wiki/Sutherland%E2%80%93Hodgman_algorithm
-    /// </summary>
+    /// <summary>Sutherland-Hodgman 클리핑</summary>
     internal static class GLClip
     {
         public struct V
@@ -47,9 +45,7 @@ namespace YART.Rendering
             }
         }
 
-        /// <summary>
-        /// 볼록 다각형 poly[0..count)를 AA 사각형 clip으로 잘라낸다
-        /// </summary>
+        /// <summary>result는 내부 버퍼라 다음 호출 전까지만 유효</summary>
         public static int ClipConvex(V[] poly, int count, Rect clip, out V[] result)
         {
             V[] src = bufA, dst = bufB;

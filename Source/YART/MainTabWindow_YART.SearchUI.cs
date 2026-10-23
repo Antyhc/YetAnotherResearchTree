@@ -20,18 +20,17 @@ namespace YART
         private string modSuggestPartial; // RefreshModSuggestions 캐시 키
         private readonly List<(string name, string packageId)> modSuggestions = new List<(string, string)>();
 
-        private string searchQuery = ""; // 검색창에 커밋된 텍스트 (TextField 바인딩)
-        private string searchEffective = ""; // 실제 검색에 쓰는 쿼리 = 커밋분 + IME 조합분
-        // 매치 판정은 Def 기준 — 통합(All tabs) 뷰의 복사본 노드도 같은 Def로 매치되게 (인스턴스 비교는 통합서 실패)
+        private string searchQuery = "";
+        private string searchEffective = ""; // searchQuery + IME 조합 중인 글자
+        // 통합 뷰의 복사본 노드도 매치되도록 인스턴스가 아닌 Def로 판정
         private readonly HashSet<ResearchProjectDef> matchedDefs = new HashSet<ResearchProjectDef>();
-        private readonly List<ResearchSearchEngine.SearchResult> searchResults = new List<ResearchSearchEngine.SearchResult>(); // 랭킹된 검색 결과
+        private readonly List<ResearchSearchEngine.SearchResult> searchResults = new List<ResearchSearchEngine.SearchResult>();
         private Rect searchResultsRect; // 직전 프레임의 드롭다운 영역 (캔버스 입력 차단용)
-        private bool searchDropdownClosed; // 빈 곳 클릭으로 드롭다운만 닫은 상태 (쿼리 변경 시 재오픈)
-        // searchSelIndex/searchScrollPos는 Results·ModComplete 두 모드가 공유 — RunSearch/RefreshModSuggestions가
-        // 각자 목록 변경 시점에 리셋한다는 전제. 목록을 다른 경로로 바꾸면 리셋도 같이 옮길 것.
-        private int searchSelIndex; // 키보드 선택 행
+        private bool searchDropdownClosed; // 빈 곳 클릭으로 드롭다운만 닫음. 쿼리가 바뀌면 다시 열림
+        // 아래 둘은 Results와 ModComplete가 공유하므로 목록을 바꾸는 곳에서 같이 리셋할 것
+        private int searchSelIndex;
         private Vector2 searchScrollPos;
-        private int searchDropdownRowCount; // 직전 프레임 드롭다운 행 수 (휠 pre-pass의 스크롤 클램프용)
+        private int searchDropdownRowCount; // 직전 프레임 값. 휠 pre-pass의 스크롤 클램프용
 
         private const float SearchRowHeight = 26f;
         private const int SearchMaxVisibleRows = 8;
@@ -39,7 +38,6 @@ namespace YART
 
         private static bool SearchFieldFocused => GUI.GetNameOfFocusedControl() == SearchFieldName;
 
-        /// <summary>검색어를 비우고 결과/드롭다운을 초기화한다 (x 버튼·ESC 공용).</summary>
         private void ClearSearchQuery()
         {
             searchQuery = "";
@@ -48,14 +46,14 @@ namespace YART
             RunSearch();
         }
 
-        /// <summary>결과 행 선택 → 해당 노드로 점프. 통합 뷰 중이면 통합 복사본을 우선한다.</summary>
+        /// <summary>현재 그래프(통합 뷰 등)에 있는 복사본을 우선</summary>
         private void JumpToSearchResult(int index)
         {
             var resultNode = searchResults[Mathf.Clamp(index, 0, searchResults.Count - 1)].Node;
             JumpToNode(GetNodeOnCurrentGraph(resultNode.Def) ?? resultNode);
         }
 
-        /// <summary>검색창 아래 가상화 드롭다운 리스트. 보이는 행만 drawRow 호출. searchResultsRect 갱신.</summary>
+        /// <summary>보이는 행만 drawRow 호출. searchResultsRect도 갱신</summary>
         private void DrawDropdownList(Rect searchRect, int count, System.Action<Rect, int> drawRow)
         {
             int visRows = Mathf.Min(count, SearchMaxVisibleRows);
@@ -90,7 +88,6 @@ namespace YART
             Event.current.Use();
         }
 
-        /// <summary>쿼리로 검색을 재실행하고 표시 상태를 리셋한다. 빈 쿼리면 결과만 비움.</summary>
         private void RunSearch()
         {
             var results = GraphBuildPipeline.SearchEngine.Search(searchEffective);
@@ -101,7 +98,7 @@ namespace YART
             searchDropdownClosed = false;
             foreach (var res in results)
             {
-                if (res.Node.IsHidden) continue; // 미발견 연구 제외 (바닐라 동일)
+                if (res.Node.IsHidden) continue; // 바닐라처럼 미발견 연구 제외
                 matchedDefs.Add(res.Node.Def);
                 searchResults.Add(res); // 엔진이 이미 점수순 정렬
             }
@@ -121,7 +118,7 @@ namespace YART
             GUI.SetNextControlName(SearchFieldName);
             searchQuery = Widgets.TextField(textRect, searchQuery);
 
-            // IME 조합 중인 글자(아직 커밋 안 됨)도 즉시 검색에 반영 — 한글 "펨" 등 조합형 입력 대응
+            // 한글 등 IME 조합 중인 글자도 바로 검색에 반영
             string composing = SearchFieldFocused ? Input.compositionString : "";
             string effective = string.IsNullOrEmpty(composing) ? searchQuery : searchQuery + composing;
             if (effective != searchEffective)
@@ -175,15 +172,13 @@ namespace YART
             if (i == searchSelIndex) Widgets.DrawHighlightSelected(rowRect);
             else if (Mouse.IsOver(rowRect)) Widgets.DrawHighlight(rowRect);
 
-            // 시대 색 점
             Rect dotRect = new Rect(rowRect.x + 6f, rowRect.y + rowRect.height / 2f - 3f, 6f, 6f);
             Widgets.DrawBoxSolid(dotRect, resNode.EraAccentColor);
 
-            // 우측 보조 텍스트: 소속 그래프 (교차 그래프 결과만 — 클릭 시 그래프 전환됨을 암시)
+            // 다른 그래프의 결과면 소속 그래프를 우측에 표시 (클릭하면 전환됨)
             string side = null;
             if (!resNode.Key.Equals(CurrentKey))
             {
-                // resNode는 실노드 — 벤치면 Tab 라벨(널 가드), 그 외 채널 라벨
                 side = resNode.Key.Channel.IsBench && resNode.Key.Tab != null
                     ? (string)resNode.Key.Tab.LabelCap
                     : resNode.Key.Channel.Label;
@@ -261,7 +256,7 @@ namespace YART
             return SearchDropdownMode.None;
         }
 
-        /// <summary>입력 중인 마지막 토큰이 "@…"이면 @ 뒤 부분(소문자), 아니면 null.</summary>
+        /// <summary>마지막 토큰이 @로 시작하면 @ 뒤 부분(소문자), 아니면 null</summary>
         private string CurrentAtToken()
         {
             if (string.IsNullOrEmpty(searchQuery) || searchQuery.EndsWith(" ")) return null;
@@ -289,14 +284,14 @@ namespace YART
             searchScrollPos = Vector2.zero;
         }
 
-        /// <summary>마지막 @토큰을 "@packageId "로 치환. 모드명은 공백 포함이라 packageId를 삽입.</summary>
+        /// <summary>모드명엔 공백이 있을 수 있어 packageId로 치환</summary>
         private void ApplyModCompletion(string packageId)
         {
             int lastSpace = searchQuery.LastIndexOf(' ');
             string head = lastSpace < 0 ? "" : searchQuery.Substring(0, lastSpace + 1);
             searchQuery = head + "@" + packageId.ToLowerInvariant() + " ";
             searchEffective = searchQuery;
-            GUI.FocusControl(SearchFieldName); // 자동완성 선택 후에도 계속 입력 가능하게 포커스 유지
+            GUI.FocusControl(SearchFieldName); // 선택 후에도 계속 입력하도록 포커스 유지
             SyncSearchFieldEditor();
             RunSearch();
         }
@@ -406,7 +401,7 @@ namespace YART
 
         public override void OnCancelKeyPressed()
         {
-            // ESC 1회 = 검색어 지우기, 비어 있으면 2회째에 포커스 해제 (창 닫기는 그 다음)
+            // ESC는 검색어 지우기, 포커스 해제, 창 닫기 순
             if (!SearchFieldFocused)
             {
                 base.OnCancelKeyPressed();
@@ -435,7 +430,7 @@ namespace YART
             {
                 ApplyModCompletion(modSuggestions[Mathf.Clamp(searchSelIndex, 0, modSuggestions.Count - 1)].packageId);
             }
-            Event.current.Use(); // 드롭다운이 없어도 검색창 포커스 중 Enter로 창이 닫히지 않게 소비
+            Event.current.Use(); // 검색창 포커스 중엔 Enter로 창이 닫히지 않게 항상 소비
         }
     }
 }

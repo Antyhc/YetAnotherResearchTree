@@ -147,10 +147,7 @@ namespace YART.Utils
             List<ResearchProjectDef> alsoNeeds, Action<ResearchProjectDef> onResearchClick)
             => LayoutGroupHeader(x, cy, width, alsoNeeds, draw: true, onResearchClick);
 
-        /// <summary>
-        /// "UnlockedWith A, B, C" 헤더의 줄바꿈 배치. Measure/Draw가 같은 배치 규칙을 쓰도록 한 곳에 모았다.
-        /// draw=false면 Widgets 호출 없이 높이만 계산한다. 반환값은 헤더 아래쪽 y.
-        /// </summary>
+        /// <summary>Measure/Draw 공용 줄바꿈 배치. draw=false면 그리지 않고 헤더 아래 y만 반환</summary>
         private static float LayoutGroupHeader(float x, float cy, float width,
             List<ResearchProjectDef> alsoNeeds, bool draw, Action<ResearchProjectDef> onResearchClick)
         {
@@ -163,7 +160,7 @@ namespace YART.Utils
                 float curX = startX;
                 float lineY = cy;
 
-                // 줄바꿈 없이 그대로 이어붙이는 장식 텍스트 (접두사·구분자)
+                // 접두사, 구분자처럼 줄바꿈 없이 이어붙이는 텍스트
                 void PlaceText(string s)
                 {
                     float w = Text.CalcSize(s).x;

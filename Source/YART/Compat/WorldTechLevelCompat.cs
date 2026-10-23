@@ -5,14 +5,7 @@ using Verse;
 
 namespace YART.Compat
 {
-    /// <summary>
-    /// World Tech Level 모드 호환성 어댑터
-    ///
-    /// 1. 월드 만들 때 월드 테크레벨 설정 가능
-    /// 2. 그 월드 테크레벨 이하의 연구만 표시
-    /// 3. 가시성 필터는 "거의" 정적임 - 월드 생성, 로드 등 할때 1회 계산
-    /// 4. "거의"라고 한 이유는 WTL 내 특정 옵션을 활성화할 경우 월드 테크레벨 이상의 연구를 얻을 수 있음 그런 경우에는 재빌드 필요
-    /// </summary>
+    /// <summary>World Tech Level: 월드 테크레벨 이하 연구만 표시. WTL 옵션에 따라 게임 중에도 가시 집합이 바뀔 수 있어 재빌드 필요</summary>
     public static class WorldTechLevelCompat
     {
         private const int SigInactive = 0;
@@ -54,10 +47,7 @@ namespace YART.Compat
             }
         }
 
-        /// <summary>
-        /// 현재 가시 집합 시그니처 — 빌드/오픈 시점 비교용. 가시 def들의 shortHash를 누적해
-        /// 필터 레벨 변경뿐 아니라 Filter_Research 토글까지(가시 집합이 바뀌므로) 반영한다.
-        /// </summary>
+        /// <summary>가시 def의 shortHash 누적이라 레벨 변경뿐 아니라 Filter_Research 토글도 잡힘</summary>
         private static int CurrentSignature
         {
             get
@@ -79,7 +69,7 @@ namespace YART.Compat
             }
         }
 
-        /// <summary>이 연구를 트리에 표시할지. WTL 미설치/게임 밖/판정 실패 시 항상 true.</summary>
+        /// <summary>WTL 미설치, 게임 밖, 판정 실패 시 true</summary>
         public static bool ShouldShow(ResearchProjectDef def)
         {
             EnsureProbed();
@@ -89,13 +79,12 @@ namespace YART.Compat
             catch { return true; }
         }
 
-        /// <summary>그래프 빌드(CreateNodes) 직후 호출 — 빌드에 사용한 가시 집합 시그니처를 기록.</summary>
+        /// <summary>그래프 빌드(CreateNodes) 직후 호출</summary>
         public static void MarkBuilt()
         {
             _builtSignature = CurrentSignature;
         }
 
-        /// <summary>현재 가시 집합이 마지막 빌드와 달라 리빌드가 필요한가 (WTL 활성 시에만 true 가능).</summary>
         public static bool NeedsRebuild
         {
             get

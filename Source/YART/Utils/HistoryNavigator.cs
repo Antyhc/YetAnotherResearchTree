@@ -3,10 +3,7 @@ using Verse;
 
 namespace YART.Utils
 {
-    /// <summary>
-    /// 웹 브라우저 스타일의 뒤로/앞으로 가기 네비게이션 기능을 제공합니다.
-    /// </summary>
-    /// <typeparam name="T">저장할 타입</typeparam>
+    /// <summary>브라우저식 뒤로/앞으로 가기</summary>
     public class HistoryNavigator<T>
     {
         private readonly List<T> _history = new List<T>();
@@ -29,7 +26,6 @@ namespace YART.Utils
 
         public void Push(T item)
         {
-            // 현재 위치 이후의 기록은 모두 삭제
             if (_curIdx < _history.Count - 1)
             {
                 _history.RemoveRange(_curIdx + 1, _history.Count - (_curIdx + 1));

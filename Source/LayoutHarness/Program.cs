@@ -10,22 +10,32 @@ using YART.Data;
 
 namespace LayoutHarness
 {
-    /// <summary>
-    /// 레이아웃 하네스
-    /// </summary>
-    internal static class Program
+    internal static partial class Program
     {
         private static int Main(string[] args)
         {
             var opt = ParseArgs(args);
             if (opt == null) { PrintUsage(); return 1; }
 
+            if (opt.Params != null) ApplyParamsFile(opt.Params);
+            if (opt.Tune != null) return RunTune(opt.Tune, opt.OutDir ?? Path.Combine(Path.GetTempPath(), "YART_tune") /* 창작마당 업로드에 섞이지 않게 모드 폴더 밖 */, opt.Generations, opt.Parallel, opt.Seed, opt.Sigma, opt.MinNodes, opt.Start, opt.Holdout);
+            if (opt.Score != null) return RunScore(opt.Score, opt.Json, opt.MinNodes);
+            if (opt.Rescore != null) return RunRescore(opt.Rescore, 15);
+
             if (!File.Exists(opt.InPath))
             {
                 Console.Error.WriteLine($"입력 파일 없음: {opt.InPath}");
             }
 
-            var dump = LoadDump(opt.InPath);
+            var file = LoadDump(opt.InPath);
+            if (opt.Against != null) file.Graphs = LoadDump(opt.Against).Graphs; // 예: 생성기 spec과 인게임 덤프 비교
+            if (opt.Verify) return Verify(file);
+
+            // input 섹션이 있으면 게임과 같은 GraphTopology로 재구성. --raw면 export된 그래프 그대로
+            List<DumpGraph> dump;
+            if (file.Input != null && !opt.Raw) dump = BuildFromInput(file.Input);
+            else if (file.Graphs != null) dump = file.Graphs;
+            else { Console.Error.WriteLine("graphs/input 섹션이 모두 없음"); return 1; }
             if (opt.List)
             {
                 Console.WriteLine($"{dump.Count} graphs in {opt.InPath}:");
@@ -37,8 +47,8 @@ namespace LayoutHarness
             Prefs.DevMode = opt.DevMode;
             YART.SugiyamaLayout.GroupClusteringEnabled = opt.Group;
 
-            // 그룹키(출처 탭) 복원: per-tab 그래프(Unified류 제외)에서 defName→탭키 맵을 만든다 (export 재생성 불필요).
-            // picked도 포함 — 그래야 per-tab 그래프를 picked로 골라도 노드가 자기 탭 그룹을 갖고 no-op이 검증된다.
+            // 탭별 그래프에서 defName -> 탭키 맵을 만들어 그룹키(출처 탭) 복원
+            // picked도 포함해야 탭별 그래프를 골랐을 때 그룹 클러스터링 no-op이 검증됨
             var groupMap = new Dictionary<string, string>();
             foreach (var g in dump)
             {
@@ -76,13 +86,13 @@ namespace LayoutHarness
                 {
                     Console.WriteLine($"  [{n.Label}] rank={n.Rank} vo={n.VOrder} y={n.Position.y:F0}");
 
-                    // 이 노드가 속한 레이어(rank) 전체 — 빈 공간/장애물 확인용
+                    // 같은 레이어 전체. 빈 공간, 장애물 확인용
                     var myLayer = graph.Nodes.Where(z => z.Rank == n.Rank).OrderBy(z => z.VOrder).ToList();
                     Console.WriteLine($"      LAYER r{n.Rank} ({myLayer.Count} nodes):");
                     foreach (var z in myLayer)
                         Console.WriteLine($"        vo{z.VOrder,2} y{z.Position.y,6:F0} {(z.IsDummy ? "(D)" : z.Label)}");
 
-                    // 들어오는(선행) 체인 Y 프로파일 — 더미 체인을 실소스까지 거슬러 올라가며 각 더미의 레이어 위/아래 이웃(장애물)까지 출력
+                    // 선행 더미 체인을 실소스까지 거슬러 올라가며 Y와 위아래 이웃 출력
                     foreach (var p in n.Prerequisites)
                     {
                         var profIn = new System.Collections.Generic.List<string>();
@@ -108,7 +118,7 @@ namespace LayoutHarness
                             Console.WriteLine($"      -> {c.Label} rank={c.Rank} vo={c.VOrder} y={c.Position.y:F0}");
                             continue;
                         }
-                        // 더미 체인 끝까지 따라가며 Y 프로파일 + 종착 실타깃
+                        // 더미 체인 끝까지 Y 프로파일과 종착 실타깃
                         var prof = new System.Collections.Generic.List<string>();
                         var cur = c; var guard = 0;
                         while (cur != null && cur.IsDummy && guard++ < 50)
@@ -129,7 +139,7 @@ namespace LayoutHarness
             return 0;
         }
 
-        // 병합(통합) 그래프 키 판별 — 게임 프리셋은 "…/AllTabs" 또는 "…/Preset:…", 구버전 export는 "Unified".
+        // 게임은 ".../AllTabs" 또는 ".../Preset:...", 구버전 export는 "Unified"
         private static bool IsMergedKey(string key)
             => key.IndexOf("AllTabs", StringComparison.OrdinalIgnoreCase) >= 0
             || key.IndexOf("Preset", StringComparison.OrdinalIgnoreCase) >= 0
@@ -142,8 +152,8 @@ namespace LayoutHarness
             var byId = new Dictionary<string, ResearchNode>(d.Nodes.Count);
             foreach (var n in d.Nodes)
             {
-                string group = null;
-                groupMap?.TryGetValue(n.Id, out group);
+                string group = n.Group;
+                if (group == null) groupMap?.TryGetValue(n.Id, out group);
                 var node = new ResearchNode
                 {
                     Id = n.Id,
@@ -177,7 +187,7 @@ namespace LayoutHarness
             float realMaxCol = MaxColumnPx(g);
             var m = g.Metrics;
 
-            // 트리 전체 세로 범위 (실노드 박스 기준 maxY-minY) — 낮을수록 컴팩트
+            // 실노드 박스 기준 maxY-minY
             float tTop = float.MaxValue, tBot = float.MinValue;
             foreach (var n in g.Nodes)
             {
@@ -188,8 +198,7 @@ namespace LayoutHarness
             }
             float treeHeight = (tBot >= tTop) ? tBot - tTop : 0f;
 
-            // 엣지 세로 어긋남(slant): 정규화 후 g.Edges는 실제 렌더 단위 세그먼트(실↔더미). 세그먼트마다 |Δy| 합산.
-            // 같은 Y(수평) 엣지=0, Y 차이 클수록 큼. ΣLen은 물리적 거리(Euclid) 총합.
+            // slant: 정규화 후 g.Edges는 렌더 단위 세그먼트(실 <-> 더미)라 세그먼트별 |dy|를 합산
             float edgeDy = 0f, edgeLen = 0f, edgeDyMax = 0f;
             int segs = 0;
             foreach (var e in g.Edges)
@@ -203,8 +212,8 @@ namespace LayoutHarness
             }
             float edgeDyAvg = segs > 0 ? edgeDy / segs : 0f;
 
-            // 시각 교차: 인접 랭크 세그먼트가 실제 Y로 교차하는 쌍 수 (VOrder 기반 위상 교차와 달리 좌표 인력/번들 반영).
-            // 두 세그먼트 (a→b),(c→d)는 (a.y−c.y)(b.y−d.y)<0 이면 교차. 같은 Y로 합류한 더미끼리는 교차 안 침(번들 효과 반영).
+            // 실제 Y로 교차하는 세그먼트 쌍 수. VOrder 위상 교차와 달리 번들이 반영됨
+            // (a->b), (c->d)는 (a.y-c.y)(b.y-d.y) < 0이면 교차. 같은 Y로 합류한 더미끼리는 교차 아님
             var segByRank = new Dictionary<int, List<ResearchEdge>>();
             foreach (var e in g.Edges)
             {
@@ -238,8 +247,7 @@ namespace LayoutHarness
             Console.WriteLine($"  EDGE ΔY (slant): Σ={edgeDy:F0}px  avg={edgeDyAvg:F1}px/seg  max={edgeDyMax:F0}px   (ΣLen={edgeLen:F0}px, {segs} segs)   <-- 낮을수록 엣지가 수평");
             Console.WriteLine($"  VISUAL crossings (실제 Y 세그먼트 교차): {visualCross}   <-- 번들/인력 반영 (위상 crossings와 별개)");
 
-            // 그룹 분산도: 각 랭크에서 그룹별 연속 런을 센다. 한 그룹이 한 랭크에서 여러 조각으로 흩어지면 extraRuns↑.
-            // dispersion=0 이면 모든 그룹이 매 랭크에서 한 덩어리(완전 정렬). 실노드만 집계.
+            // 그룹 분산도: 랭크마다 그룹의 연속 런 수. 한 그룹이 여러 조각으로 흩어지면 extraRuns가 늘어남. 실노드만 집계
             bool anyGroup = g.Nodes.Any(n => !n.IsDummy && !string.IsNullOrEmpty(n.GroupKey));
             if (anyGroup)
             {
@@ -329,7 +337,7 @@ namespace LayoutHarness
         }
 
         // SugiyamaLayout.ValidateLayerSeparation와 동일
-        private static int CountVisualOverlaps(ResearchSubGraph g)
+        private static int CountVisualOverlaps(ResearchSubGraph g, bool quiet = false)
         {
             int count = 0;
             foreach (var grp in g.Nodes.GroupBy(n => n.Rank))
@@ -344,7 +352,7 @@ namespace LayoutHarness
                     if (gap < visualMin)
                     {
                         count++;
-                        Console.Error.WriteLine($"  overlap rank {layer[i].Rank}: [{Desc(layer[i])} y={layer[i].Position.y:F0} vo={layer[i].VOrder}] | [{Desc(layer[i + 1])} y={layer[i + 1].Position.y:F0} vo={layer[i + 1].VOrder}]  gap={gap:F0} need={visualMin:F0}");
+                        if (!quiet) Console.Error.WriteLine($"  overlap rank {layer[i].Rank}: [{Desc(layer[i])} y={layer[i].Position.y:F0} vo={layer[i].VOrder}] | [{Desc(layer[i + 1])} y={layer[i + 1].Position.y:F0} vo={layer[i + 1].VOrder}]  gap={gap:F0} need={visualMin:F0}");
                     }
                 }
             }
@@ -362,11 +370,15 @@ namespace LayoutHarness
             return (ha + hb) / 2f + spacing;
         }
 
-        private static List<DumpGraph> LoadDump(string path)
+        private static DumpFile LoadDump(string path)
         {
-            var list = new List<DumpGraph>();
+            var file = new DumpFile();
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            foreach (var g in doc.RootElement.GetProperty("graphs").EnumerateArray())
+            if (doc.RootElement.TryGetProperty("input", out var input)) file.Input = ParseInput(input);
+            if (!doc.RootElement.TryGetProperty("graphs", out var graphs)) return file;
+
+            var list = file.Graphs = new List<DumpGraph>();
+            foreach (var g in graphs.EnumerateArray())
             {
                 var dg = new DumpGraph { Key = g.GetProperty("key").GetString() };
                 foreach (var n in g.GetProperty("nodes").EnumerateArray())
@@ -383,10 +395,10 @@ namespace LayoutHarness
                     dg.Edges.Add(new DumpEdge { From = e.GetProperty("from").GetString(), To = e.GetProperty("to").GetString() });
                 list.Add(dg);
             }
-            return list;
+            return file;
         }
 
-        // ── args ──
+        #region args
         private sealed class Options
         {
             public string InPath = "YART_layout_graph.json";
@@ -395,8 +407,25 @@ namespace LayoutHarness
             public bool DevMode;
             public bool List;
             public bool Dump;
-            public bool Group; // 그룹 클러스터링(출처 탭별 세로 묶기) 활성
+            public bool Group; // 출처 탭별 세로 묶기
             public string Trace;
+            public bool Raw;    // input 섹션이 있어도 export된 graphs를 사용
+            public bool Verify; // input으로 재구성한 그래프와 export된 graphs 비교
+            public string Against; // --verify 비교 대상 graphs를 이 파일에서
+            // 튜닝
+            public string Params;   // 상수 덮어쓰기 JSON
+            public string Score;    // 채점할 평가 세트 폴더
+            public string Json;     // --score 결과 출력 파일
+            public string Tune;     // CMA-ES 튜닝용 평가 세트 폴더
+            public string OutDir;
+            public int MinNodes = 10;
+            public int Generations = 40;
+            public int Parallel = Math.Max(1, Environment.ProcessorCount / 2);
+            public int Seed = 1;
+            public double Sigma = 0.25;
+            public string Start;    // 시작점 JSON. baseline은 그대로 현재 기본값
+            public string Rescore;  // 저장된 튜닝 결과를 현재 목적 함수로 재순위
+            public string Holdout;  // 튜닝 후 상위 후보를 튜닝에 안 쓴 평가 세트로 검증
         }
 
         private static Options ParseArgs(string[] args)
@@ -414,6 +443,22 @@ namespace LayoutHarness
                     case "--dump": o.Dump = true; break;
                     case "--group": o.Group = true; break;
                     case "--trace": o.Trace = args[++i]; break;
+                    case "--raw": o.Raw = true; break;
+                    case "--verify": o.Verify = true; break;
+                    case "--against": o.Against = args[++i]; o.Verify = true; break;
+                    case "--params": o.Params = args[++i]; break;
+                    case "--score": o.Score = args[++i]; break;
+                    case "--json": o.Json = args[++i]; break;
+                    case "--tune": o.Tune = args[++i]; break;
+                    case "--start": o.Start = args[++i]; break;
+                    case "--rescore": o.Rescore = args[++i]; break;
+                    case "--holdout": o.Holdout = args[++i]; break;
+                    case "--out-dir": o.OutDir = args[++i]; break;
+                    case "--min-nodes": o.MinNodes = int.Parse(args[++i]); break;
+                    case "--generations": o.Generations = int.Parse(args[++i]); break;
+                    case "--parallel": o.Parallel = int.Parse(args[++i]); break;
+                    case "--seed": o.Seed = int.Parse(args[++i]); break;
+                    case "--sigma": o.Sigma = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
                     case "-h": case "--help": return null;
                     default: Console.Error.WriteLine($"알 수 없는 인자: {args[i]}"); return null;
                 }
@@ -429,7 +474,15 @@ namespace LayoutHarness
             Console.WriteLine("  --out <path>    SVG 출력 경로 (기본: <graph>_<fix>.svg)");
             Console.WriteLine("  --devmode       Prefs.DevMode=true (불변식 경고 출력)");
             Console.WriteLine("  --list          JSON 안의 그래프 목록만 출력");
+            Console.WriteLine("  --raw           input(spec) 섹션이 있어도 export된 graphs를 사용");
+            Console.WriteLine("  --verify        input으로 재구성한 그래프가 export된 graphs와 같은지 비교");
+            Console.WriteLine("  --against <p>   --verify의 비교 대상 graphs를 다른 export 파일에서 (생성기 spec vs 인게임 덤프)");
+            Console.WriteLine("  --params <p>    튜닝 대상 Constraints 상수를 JSON({이름: 값})으로 덮어쓰기");
+            Console.WriteLine("  --score <dir>   평가 세트(*_specs.json) 전체 채점 [--json out] [--min-nodes 10]");
+            Console.WriteLine("  --tune <dir>    CMA-ES 튜닝 [--out-dir d] [--generations 40] [--parallel n] [--seed 1] [--sigma 0.25] [--start p.json] [--holdout dir]");
+            Console.WriteLine("  --rescore <d>   저장된 튜닝 결과 폴더를 현재 목적 함수로 다시 순위 매기기");
         }
+        #endregion
 
         private static string Sanitize(string s)
         {
@@ -438,8 +491,9 @@ namespace LayoutHarness
         }
 
         // DTO
+        private sealed class DumpFile { public List<DumpGraph> Graphs; public GraphInput Input; }
         private sealed class DumpGraph { public string Key; public List<DumpNode> Nodes = new(); public List<DumpEdge> Edges = new(); }
-        private sealed class DumpNode { public string Id; public string Label; public int Tech; public bool Proxy; }
+        private sealed class DumpNode { public string Id; public string Label; public int Tech; public bool Proxy; public string Group; }
         private sealed class DumpEdge { public string From; public string To; }
     }
 }

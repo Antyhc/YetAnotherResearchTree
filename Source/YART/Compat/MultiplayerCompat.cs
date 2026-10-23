@@ -8,18 +8,10 @@ using YART.Data;
 
 namespace YART.Compat
 {
-    /// <summary>
-    /// Zetrith's Multiplayer 호환 어댑터
-    ///
-    /// 연구 큐를 플레이어마다 동기화 시키는 인터페이스를 제공한다
-    /// 큐 메니저의 UI 진입점을 Try*로 제공하여 MP 세션에서는 Cmd_* 메서드로 동기화, SP 세션에서는 기존 Do* 메서드로 직접 실행한다
-    /// 모든 인자들은 MP가 네이티브로 직렬화 할 수 있는 타입 (Defs, string, primitive)으로만 구성되어야 한다
-    ///
-    /// </summary>
+    /// <summary>Zetrith's Multiplayer 연구 큐 동기화. Cmd_* 인자는 MP가 직렬화할 수 있는 타입(Def, string, primitive)만</summary>
     [StaticConstructorOnStartup]
     public static class MultiplayerCompat
     {
-        /// <summary>Whether queue mutations must be routed through MP sync (in an active MP session).</summary>
         public static bool InMultiplayer => MP.enabled && MP.IsInMultiplayer;
 
         static MultiplayerCompat()
@@ -41,7 +33,8 @@ namespace YART.Compat
             }
         }
 
-        // ---- UI 진입점 게이트 (MP면 sync로 보내고 true, 아니면 false=호출자가 SP 코어 실행) ----
+        #region Try 게이트
+        // MP면 sync로 보내고 true. false면 호출자가 Do*를 직접 실행
 
         public static bool TryEnqueue(ResearchProjectDef def, bool toFront)
         {
@@ -85,7 +78,10 @@ namespace YART.Compat
             return true;
         }
 
-        // ---- MP sync 진입점 (전 클라이언트에서 실행) ----
+        #endregion
+
+        #region MP sync 메서드
+        // 모든 클라이언트에서 실행
 
         public static void Cmd_Enqueue(ResearchProjectDef def, bool toFront) => ResearchQueueManager.Instance?.DoEnqueue(def, toFront);
         public static void Cmd_Remove(ResearchProjectDef def) => ResearchQueueManager.Instance?.DoRemove(def);
@@ -94,6 +90,8 @@ namespace YART.Compat
         public static void Cmd_ClearAndEnqueue(ResearchProjectDef def) => ResearchQueueManager.Instance?.DoEnqueueExclusive(def);
         public static void Cmd_Reorder(string channelId, ResearchProjectDef def, int targetIndex)
             => ResearchQueueManager.Instance?.DoReorder(ChannelRegistry.ById(channelId), def, targetIndex);
+
+        #endregion
 
         private static void ConfirmMemesThenSync(ResearchProjectDef def, Action syncAction)
         {

@@ -26,7 +26,6 @@ namespace YART
 
         private bool svDragging, hueDragging;
 
-        // SV 사각형 텍스처, Hue 바 텍스처
         private Texture2D svTex;
         private Color[] svPx;
         private float svTexHue = -1f;
@@ -66,24 +65,20 @@ namespace YART
         {
             if (color != lastSync) { SyncBuffers(); lastSync = color; }
 
-            // 제목
             using (Temporary.Font(GameFont.Medium))
                 Widgets.Label(new Rect(inRect.x, inRect.y, inRect.width, 32f),
                     "ChooseAColor".Translate().CapitalizeFirst());
             float top = inRect.y + 38f;
 
-            // SV 사각형 + Hue 바
             float svW = 240f, svH = 200f, hueW = 22f;
             Rect svRect = new Rect(inRect.x, top, svW, svH);
             Rect hueRect = new Rect(svRect.xMax + 10f, top, hueW, svH);
             DrawSvSquare(svRect);
             DrawHueBar(hueRect);
 
-            // 우측 컬럼
             Rect right = new Rect(hueRect.xMax + 14f, top, inRect.xMax - (hueRect.xMax + 14f), svH);
             DrawRightColumn(right);
 
-            // SV 아래
             float y = svRect.yMax + 12f;
             float ctlW = hueRect.xMax - inRect.x;
             const float rowH = 28f, rowGap = 4f;
@@ -115,7 +110,7 @@ namespace YART
             GUI.DrawTexture(r, svTex);
             Widgets.DrawBox(r, 1);
 
-            // 핸들 (상=명도1, 좌=채도0)
+            // 핸들. 위가 명도 1, 왼쪽이 채도 0
             float hx = r.x + sat * r.width;
             float hy = r.y + (1f - val) * r.height;
             Rect handle = new Rect(hx - 5f, hy - 5f, 10f, 10f);
@@ -140,7 +135,7 @@ namespace YART
             }
             for (int yy = 0; yy < SvRes; yy++)
             {
-                float v = (float)yy / (SvRes - 1); // y=0(아래)=명도0
+                float v = (float)yy / (SvRes - 1); // 텍스처 y=0이 아래라 아래가 명도 0
                 for (int xx = 0; xx < SvRes; xx++)
                     svPx[yy * SvRes + xx] = Color.HSVToRGB(hue, (float)xx / (SvRes - 1), v);
             }
@@ -154,7 +149,7 @@ namespace YART
             GUI.DrawTexture(r, HueTexture());
             Widgets.DrawBox(r, 1);
 
-            float hy = r.y + hue * r.height; // 상=hue0
+            float hy = r.y + hue * r.height; // 위가 hue 0
             Rect marker = new Rect(r.x - 2f, hy - 2f, r.width + 4f, 4f);
             using (Temporary.Color(Color.white)) Widgets.DrawBox(marker, 1);
 
@@ -174,7 +169,7 @@ namespace YART
                 { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
                 var px = new Color[H];
                 for (int y = 0; y < H; y++)
-                    px[y] = Color.HSVToRGB(1f - (float)y / (H - 1), 1f, 1f); // 아래=hue1, 위=hue0
+                    px[y] = Color.HSVToRGB(1f - (float)y / (H - 1), 1f, 1f); // y=0이 아래라 뒤집어서 위가 hue 0
                 hueTex.SetPixels(px);
                 hueTex.Apply();
             }
@@ -234,7 +229,7 @@ namespace YART
                 if (int.TryParse(nb, out int iv))
                 {
                     SetChannel(idx, Mathf.Clamp01(iv / 255f));
-                    lastSync = color; // 타이핑 중 버퍼 클로버 방지
+                    lastSync = color; // 입력 중인 버퍼를 덮어쓰지 않게
                 }
             }
         }
@@ -278,7 +273,7 @@ namespace YART
         private void ResyncHsvFromColor()
         {
             Color.RGBToHSV(color, out float h, out float s, out float v);
-            if (s > 0.0001f) hue = h; // 회색이면 기존 hue 유지(휠 위치 보존)
+            if (s > 0.0001f) hue = h; // 무채색이면 hue가 0으로 나오니 기존 값 유지
             sat = s;
             val = v;
         }

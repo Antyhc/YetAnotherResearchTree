@@ -3,12 +3,9 @@ using UnityEngine;
 
 namespace YART.Data
 {
-    /// <summary>
-    /// 현재 적용되는 색상
-    /// </summary>
     public static class ActiveColors
     {
-        // 시대 색 인덱스 순서 — eraColors/프리셋 era 배열, EraIndex와 동일 순서.
+        // eraColors, 프리셋 era 배열, EraIndex와 같은 순서여야 함
         public static readonly TechLevel[] EraOrder =
         {
             TechLevel.Animal, TechLevel.Neolithic, TechLevel.Medieval, TechLevel.Industrial,

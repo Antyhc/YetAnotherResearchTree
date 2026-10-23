@@ -8,38 +8,30 @@ using YART.Data;
 
 namespace YART
 {
-    /// <summary>
-    /// Sugiyama 계층 레이아웃 엔진: 랭크 할당 → 교차 최소화 → X/Y 좌표 배정으로 연구 트리를 배치한다.
-    ///
-    /// 파이프라인: AssignRanks/TightenRanks/BalanceRanks(랭크) → PlaceProxies → CompactRanks
-    /// → NormalizeEdges(더미) → MinimizeCrossings(순서) → AssignX → AssignY → UntangleChains → PlaceIsolated.
-    /// </summary>
     public class SugiyamaLayout
     {
         private ResearchSubGraph graph;
         private Dictionary<ResearchNode, TechLevel> effectiveTechLevel;
         private Dictionary<int, List<ResearchNode>> isolatedNodesByRank;
         private HashSet<ResearchNode> isolatedNodesSet;
-        private bool graphHasEras; // 실노드 중 하나라도 TechLevel가 정의됐는가
-        private int lastNonConvergedChains; // ShapeChains 마지막 호출의 미수렴 체인 수
-        private Dictionary<ResearchNode, int> subtreeWeight; // 하위 도달 노드 수 (variant 3 center-out 시드용, lazy)
-        private float columnBudget; // ComputeColumnBudget이 설정하는 컬럼 높이 예산
+        private bool graphHasEras;
+        private int lastNonConvergedChains; // ShapeChains 마지막 호출 기준
+        private Dictionary<ResearchNode, int> subtreeWeight; // 하위 도달 노드 수 (center-out 시드용, lazy)
+        private float columnBudget;
 
-        /// <summary>같은 연구 탭 노드를 세로로 묶는다 (IsPreset 병합 그래프에만 적용).</summary>
+        /// <summary>같은 연구 탭 노드를 세로로 묶음. 병합 프리셋 그래프에만 적용</summary>
         public static bool GroupClusteringEnabled = false;
         private Dictionary<string, int> groupOrderIndex;
 
-        /// <summary>실노드 한 행의 세로 피치</summary>
         private static float GridY => Constraints.NodeSize.y + Constraints.NodeSpacing.y;
 
-        /// <summary>더미 통로 한 줄의 세로 피치</summary>
         private static float CorridorRowY => Constraints.LayoutDummyNodeHeight + Constraints.LayoutDummySpacing;
 
         public void Calculate(ResearchSubGraph graph)
         {
             if (graph.Nodes.Count == 0) return;
 
-            LayoutExport.Capture(graph); // 더미/랭크 생성 이전의 raw 구조 (DevMode export 버퍼)
+            LayoutExport.Capture(graph); // 더미/랭크 생성 전에 떠야 함
 
             this.graph = graph;
             effectiveTechLevel = new Dictionary<ResearchNode, TechLevel>();
@@ -64,7 +56,7 @@ namespace YART
             NormalizeEdges();
             ExtractIsolated();
             var layers = BuildLayers(0);
-            // ungrouped 패스를 먼저: 여기서 만든 그룹 내부 상대순서가 EnforceGroupContiguity의 stable-sort로 보존돼 시드가 된다.
+            // 그룹 없이 먼저 돌린 순서를 EnforceGroupContiguity가 stable-sort로 보존해 그룹 내 시드로 씀
             int metricsCrossings = MinimizeCrossings(layers);
 
             if (GroupClusteringEnabled && graph.Key.IsPreset)
@@ -82,7 +74,7 @@ namespace YART
             }
 
             PlaceIsolated(layers, rankX, bands);
-            AlignTerminalLeavesToIncoming(layers); // 더미 셰이핑·고립 배치가 모두 끝난 뒤여야 한다
+            AlignTerminalLeavesToIncoming(layers); // 더미 셰이핑, 고립 배치가 끝난 뒤여야 함
             ValidateLayerSeparation(layers);
 
             graph.UpdateBoundingBox();
@@ -92,23 +84,19 @@ namespace YART
 
         private bool InGraph(ResearchNode n) => n.Key.Equals(graph.Key);
 
-        /// <summary>같은 그래프의 실제 선행 노드</summary>
         private IEnumerable<ResearchNode> RealPrereqs(ResearchNode n)
             => n.Prerequisites.Where(p => !p.IsDummy && !p.IsProxy && InGraph(p));
 
-        /// <summary>같은 그래프의 실제 자식 노드</summary>
         private IEnumerable<ResearchNode> RealChildren(ResearchNode n)
             => n.Children.Where(c => !c.IsDummy && !c.IsProxy && InGraph(c));
 
-        /// <summary>레이아웃 그래프 내 상위 이웃</summary>
         private IEnumerable<ResearchNode> Ups(ResearchNode n) => n.Prerequisites.Where(InGraph);
 
-        /// <summary>레이아웃 그래프 내 하위 이웃</summary>
         private IEnumerable<ResearchNode> Downs(ResearchNode n) => n.Children.Where(InGraph);
 
         private ResearchNode NextTrunkDown(ResearchNode d) => Downs(d).FirstOrDefault(x => x.IsDummy);
 
-        /// <summary>더미 트렁크의 머리(첫 더미)까지 거슬러 올라간다. 더미 in-degree 1 불변식에 의존.</summary>
+        /// <summary>트렁크의 첫 더미. 더미 in-degree 1 불변식에 의존</summary>
         private ResearchNode ChainHeadOf(ResearchNode dummy)
         {
             var head = dummy;
@@ -149,24 +137,22 @@ namespace YART
             return (ys.Count & 1) == 1 ? ys[m] : (ys[m - 1] + ys[m]) / 2f;
         }
 
-        /// <summary>노드의 수직 점유 높이 — 더미(엣지 통로)는 실제 노드보다 좁다.</summary>
         private static float NodeHeightOf(ResearchNode n)
             => n.IsDummy ? Constraints.LayoutDummyNodeHeight : Constraints.NodeSize.y;
 
-        /// <summary>인접쌍 간격의 스페이싱 성분 — 더미-더미는 LayoutDummySpacing, 그 외는 NodeSpacing.y.</summary>
         private static float SpacingOf(ResearchNode a, ResearchNode b)
             => a.IsDummy && b.IsDummy ? Constraints.LayoutDummySpacing : Constraints.NodeSpacing.y;
 
-        /// <summary>통로 클램프 쌍별 완화량 = 스페이싱 성분 − 시각적 패드 (SeparationOf에서 빼면 시각적 최소 간격).</summary>
+        /// <summary>SeparationOf에서 빼면 시각적 최소 간격이 되는 통로 클램프 완화량</summary>
         private static float RelaxOf(ResearchNode a, ResearchNode b)
             => Mathf.Max(0f, SpacingOf(a, b) - Constraints.LayoutDummyVisualPad);
 
-        /// <summary>같은 레이어에서 인접한 두 노드 중심 간 최소 수직 간격</summary>
+        /// <summary>같은 레이어 인접 두 노드의 중심 간 최소 간격</summary>
         private static float SeparationOf(ResearchNode a, ResearchNode b)
             => (NodeHeightOf(a) + NodeHeightOf(b)) / 2f + SpacingOf(a, b);
 
 
-        /// <summary>실-실 의존 엣지의 rank span 합. NormalizeEdges 이전·CompactRanks 이후에 호출해야 한다.</summary>
+        /// <summary>CompactRanks 이후, NormalizeEdges 이전에 호출해야 함</summary>
         private int ComputeTotalEdgeSpan(IReadOnlyList<ResearchNode> topo)
         {
             int span = 0;
@@ -180,7 +166,6 @@ namespace YART
             return span;
         }
 
-        /// <summary>레이아웃 완료 후 계측: 체인 bend/variation/unjustifiedBends, 컬럼 픽셀 높이, RankCost 구성 항.</summary>
         private LayoutMetrics ComputeLayoutMetrics(
             List<List<ResearchNode>> layers,
             int crossings,
@@ -208,7 +193,7 @@ namespace YART
 
                             if (!visitedChainHeads.Add(down)) continue;
 
-                            // Y 시퀀스: 소스 실노드 → 트렁크 더미들 → 첫 실타깃
+                            // Y 시퀀스: 소스 실노드, 트렁크 더미들, 첫 실타깃
                             float srcY = node.Position.y;
                             var dummyNodes = new List<ResearchNode>();
                             var cur = down;
@@ -238,8 +223,8 @@ namespace YART
                                 prevSign = sign;
                             }
 
-                            // UnjustifiedBends: 방향 전환이 이동 창(lo/hi)으로 정당화되는지 판별
-                            if (cn < 2) continue; // 더미 1개 이하 — 굽힘 불가
+                            // UnjustifiedBends: 이동 창(lo/hi)으로 설명되지 않는 방향 전환
+                            if (cn < 2) continue;
                             float chainSrcY = srcY;
                             float chainDstY = firstRealTarget != null ? firstRealTarget.Position.y : float.NaN;
                             if (float.IsNaN(chainDstY)) continue;
@@ -263,7 +248,7 @@ namespace YART
                                     ? dnLayer[dnIdx + 1].Position.y - SeparationOf(dn, dnLayer[dnIdx + 1])
                                     : float.PositiveInfinity;
 
-                                // 이 멤버가 단조 추세 밖으로 강제됐는가 (창 역전 / 창이 추세 반대편으로 밀림)
+                                // 단조 추세 밖으로 강제됨: 창 역전, 또는 창이 추세 반대편에 있음
                                 bool curForced = loJ > hiJ
                                     || (chainDir >= 0 && hiJ < monoFloor)
                                     || (chainDir <= 0 && loJ > monoCeil);
@@ -281,7 +266,7 @@ namespace YART
                                 }
                                 prevForced = curForced;
 
-                                // 추적값은 단조 방향으로만 갱신 (무조건 리셋하면 복구 굽힘을 오분류)
+                                // 단조 방향으로만 갱신. 매번 리셋하면 복귀 굽힘을 오분류함
                                 float placed = chainY[j + 1];
                                 if (placed > monoFloor) monoFloor = placed;
                                 if (placed < monoCeil)  monoCeil  = placed;
@@ -311,7 +296,7 @@ namespace YART
                 }
                 m.MaxColumnHeight = maxColH;
 
-                // RankCost 구성 항 (= BalanceRanks 비용 함수)
+                // RankCost 항. BalanceRanks 비용 함수와 같아야 함
                 float budget = columnBudget;
                 float rowReal = GridY;
                 float overflowCost = 0f;
@@ -324,7 +309,7 @@ namespace YART
                 }
                 m.OverflowCost = overflowCost;
 
-                m.UsedRankCount = rankMin.Count; // rankMin은 이미 고립 노드를 제외한 랭크 집합
+                m.UsedRankCount = rankMin.Count; // rankMin은 고립 노드를 이미 제외함
 
                 m.RankCost = m.OverflowCost
                     + Constraints.RankCostSpanWeight  * m.TotalEdgeSpan
@@ -358,7 +343,7 @@ namespace YART
                 }
             }
 
-            // 방어: 사이클은 그래프 빌드 단계에서 제거되지만 만일을 대비
+            // 사이클은 그래프 빌드에서 제거되지만 방어용
             if (result.Count < nodes.Count)
             {
                 Log.Warning($"[YART] Layout: topological order incomplete ({result.Count}/{nodes.Count}) in {graph.Key}.");
@@ -368,7 +353,7 @@ namespace YART
             return result;
         }
 
-        /// <summary>유효 TechLevel = max(자신, 조상 전체) 계산 — 밴드 구간 겹침을 원천 차단한다.</summary>
+        /// <summary>유효 TechLevel = max(자신, 모든 조상). 밴드 구간이 겹치지 않게 함</summary>
         private void ComputeEffectiveTechLevels(IEnumerable<ResearchNode> topo)
         {
             foreach (var v in topo)
@@ -383,7 +368,7 @@ namespace YART
             }
         }
 
-        /// <summary>TechLevel 밴드별 longest-path 랭크 할당 (밴드 base = 이전 밴드 max + 1).</summary>
+        /// <summary>TechLevel 밴드별 longest-path 랭크 할당</summary>
         private Dictionary<TechLevel, (int lo, int hi)> AssignRanks(IEnumerable<ResearchNode> topo)
         {
             var bands = new Dictionary<TechLevel, (int lo, int hi)>();
@@ -412,7 +397,7 @@ namespace YART
             return bands;
         }
 
-        /// <summary>Rank tightening: 각 노드를 밴드+선행/자식 제약 안에서 총 엣지 길이가 줄어드는 쪽으로 당긴다.</summary>
+        /// <summary>밴드와 선행/자식 제약 안에서 총 엣지 길이가 줄어드는 쪽으로 노드를 당김</summary>
         private void TightenRanks(IEnumerable<ResearchNode> topo, IReadOnlyDictionary<TechLevel, (int lo, int hi)> bands)
         {
             var reverseTopo = new List<ResearchNode>(topo);
@@ -456,16 +441,13 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 컬럼 높이 예산 산정. per-tab은 기본값 고정, 병합(프리셋) 그래프만 per-rank 실노드 수의 P75를 예산으로 —
-        /// 기본값은 통합엔 너무 작아 limiter가 과펼침(soup)을 만든다. 피크만 평탄화하는 것이 목표.
-        /// </summary>
+        /// <summary>병합 그래프는 랭크별 실노드 수의 P75를 예산으로. 기본값은 너무 작아 limiter가 과하게 펼침</summary>
         private float ComputeColumnBudget(IReadOnlyList<ResearchNode> topo)
         {
             float def = Constraints.LayoutMaxColumnHeight;
             if (!graph.Key.IsPreset) return def;
 
-            // limiter 펼침 이전의 자연 분포 (AssignRanks+TightenRanks 직후)
+            // limiter 이전의 자연 분포
             var counts = new Dictionary<int, int>();
             foreach (var v in topo)
             {
@@ -479,7 +461,7 @@ namespace YART
             return Mathf.Max(def, sorted[idx] * GridY);
         }
 
-        /// <summary>최대 엣지 스팬 캡(0=비활성): v를 newRank로 옮기면 가장 늦은 실선행과의 스팬이 상한을 넘는가.</summary>
+        /// <summary>가장 늦은 실선행과의 스팬 기준. 캡 0은 비활성</summary>
         private bool ExceedsMaxEdgeSpan(ResearchNode v, int newRank)
         {
             int cap = Constraints.LayoutMaxEdgeSpan;
@@ -490,10 +472,7 @@ namespace YART
             return latestPrereqRank >= 0 && (newRank - latestPrereqRank) > cap;
         }
 
-        /// <summary>
-        /// 높이 제한 레이어링: 가중 높이(실노드 행 + 관통 통로)가 소프트 예산을 넘는 컬럼에서
-        /// 슬랙 실노드를 오른쪽으로 밀어 가로↑·세로↓. 통로 포화 컬럼은 MinRows 바닥에서 멈춤.
-        /// </summary>
+        /// <summary>예산을 넘는 컬럼의 슬랙 실노드를 오른쪽으로 민다. 통로 포화 컬럼은 MinRows에서 멈춤</summary>
         private void LimitColumnHeights(IReadOnlyList<ResearchNode> topo, Dictionary<TechLevel, (int lo, int hi)> bands)
         {
             if (bands.Count == 0) return;
@@ -501,13 +480,12 @@ namespace YART
             float rowReal = GridY;
             float rowCorridor = CorridorRowY;
 
-            // 무한 루프 안전망. 수락된 밀기는 height(r)을 엄격히 줄이고 이동은 오른쪽 단방향이라
-            // 종료는 캡과 무관하게 보장된다 — 이 상한 초과는 진짜 버그.
+            // 무한 루프 안전망. 이 상한을 넘으면 버그
             int rankCount = topo.Count == 0 ? 0 : topo.Max(v => v.Rank) + 1;
             int movesLeft = topo.Count * (rankCount + Constraints.LayoutHeightLimitMaxExtraRanks);
             int extraRanksLeft = Constraints.LayoutHeightLimitMaxExtraRanks;
 
-            // 컬럼 r의 추정 높이. 관통 통로는 소스당 1개(허브 버스). 고립 노드도 행으로 친다.
+            // 관통 통로는 소스당 1개(허브 버스). 고립 노드도 행으로 침
             float ColumnHeight(int r, out int rows, out int corridors)
             {
                 rows = 0;
@@ -522,15 +500,15 @@ namespace YART
                     {
                         foreach (var c in RealChildren(v))
                         {
-                            if (c.Rank > r) { corridors++; break; } // 소스당 통로 1개 (허브 버스)
+                            if (c.Rank > r) { corridors++; break; }
                         }
                     }
                 }
                 return rows * rowReal + corridors * rowCorridor;
             }
 
-            // 컬럼 r에서 r+1로 밀 최선 후보. 우선순위: 새 통로 수 작은 순 → 리프 우선 → defName 서수(언어 무관 결정성).
-            // atBandEdge(r == band.hi)면 자식 제약 생략 — 자식은 후속 밴드라 삽입 시프트 후 r+2 이상이 됨.
+            // 우선순위: 새 통로 적은 순, 리프 우선, defName 서수(언어 무관 결정성)
+            // 밴드 끝이면 자식 제약 생략. 자식은 다음 밴드라 랭크 삽입 후 r+2 이상이 됨
             ResearchNode PickCandidate(int r, bool atBandEdge)
             {
                 ResearchNode best = null;
@@ -548,7 +526,7 @@ namespace YART
                     }
                     else
                     {
-                        // 자식 제약: 그래프 내 모든 실자식 Rank ≥ r+2 (r+1 자식이 있으면 후보 아님)
+                        // 모든 실자식이 r+2 이상이어야 함
                         bool blocked = false;
                         foreach (var c in RealChildren(v))
                         {
@@ -558,7 +536,7 @@ namespace YART
                         if (blocked) continue;
                     }
 
-                    // v를 r+1로 밀 때 새로 r을 관통하게 되는 선행 수 (이미 관통 중인 p는 버스 공유라 0)
+                    // 새로 r을 관통하게 되는 선행 수. 이미 관통 중인 선행은 버스를 공유하므로 제외
                     int newCorridors = 0;
                     foreach (var p in RealPrereqs(v))
                     {
@@ -586,7 +564,7 @@ namespace YART
                 return best;
             }
 
-            // 밴드별·랭크 오름차순 스캔. 밴드 확장으로 hi가 도중에 자라므로 매 반복 재조회.
+            // 밴드 확장으로 hi가 도중에 자라므로 매 반복 재조회
             bool warnedMoveCap = false;
             bool loggedCorridorFloor = false;
             foreach (var key in bands.Keys.OrderBy(k => k).ToList())
@@ -598,8 +576,7 @@ namespace YART
                         int rows, corridors;
                         if (ColumnHeight(r, out rows, out corridors) <= columnBudget) break;
 
-                        // 통로 포화 바닥: 실노드가 바닥 이하인데도 예산 초과 = 통로가 예산을 다 먹은 컬럼.
-                        // 더 밀면 전량 소개 → 밴드 끝 좌초만 만든다 (의도된 상황, DevMode 메시지 1회).
+                        // 통로 포화 바닥: 통로가 예산을 다 먹은 컬럼. 더 밀면 밴드 끝에 좌초만 생김
                         if (rows <= Constraints.LayoutHeightLimitMinRows)
                         {
                             if (!loggedCorridorFloor && Prefs.DevMode
@@ -614,12 +591,12 @@ namespace YART
                             break;
                         }
 
-                        // r == band.hi면 밴드 경계 — 새 랭크를 삽입해야만 오른쪽으로 수용 가능
+                        // 밴드 경계에서는 새 랭크를 삽입해야만 밀 수 있음
                         bool atBandEdge = r == bands[key].hi;
                         if (atBandEdge && extraRanksLeft <= 0) break;
 
                         var candidate = PickCandidate(r, atBandEdge);
-                        if (candidate == null) break; // 줄일 후보 없음 — 이 컬럼 포기 (소프트 예산)
+                        if (candidate == null) break; // 소프트 예산이라 포기
 
                         if (atBandEdge)
                         {
@@ -630,7 +607,7 @@ namespace YART
                         movesLeft--;
                     }
 
-                    // 전역 이동 예산 소진 = 비정상 신호 — 남은 초과 컬럼은 건너뛰므로 1회 경고.
+                    // 이동 예산 소진은 비정상. 남은 초과 컬럼은 건너뜀
                     if (!warnedMoveCap && movesLeft <= 0 && ColumnHeight(r, out _, out _) > columnBudget)
                     {
                         Log.Warning($"[YART] Layout: height-limit move cap exhausted in {graph.Key} — remaining over-budget columns skipped.");
@@ -645,12 +622,12 @@ namespace YART
             }
         }
 
-        /// <summary>전역 rank balancing: LimitColumnHeights를 시드로 삼고 ±1 greedy로 정제한다.</summary>
+        /// <summary>LimitColumnHeights 결과를 시드로 +-1 greedy 정제</summary>
         private void BalanceRanks(IReadOnlyList<ResearchNode> topo, Dictionary<TechLevel, (int lo, int hi)> bands)
         {
             if (bands.Count == 0) return;
 
-            // ── 1단계: LimitColumnHeights 시드 ──
+            // 1단계: LimitColumnHeights 시드
             LimitColumnHeights(topo, bands);
 
             float rowReal    = GridY;
@@ -659,13 +636,13 @@ namespace YART
             float lambda     = Constraints.RankCostSpanWeight;
             float mu         = Constraints.RankCostWidthWeight;
 
-            // 이동 상한 — limiter 이후 최종 rankCount 기준 재산정.
+            // limiter가 늘린 rankCount 기준
             int rankCount = topo.Count == 0 ? 0 : topo.Max(v => v.Rank) + 1;
             int movesLeft = topo.Count * rankCount;
 
-            const float EPS = 1e-4f; // float 노이즈 방지 — 이보다 작은 개선은 무시
+            const float EPS = 1e-4f; // 이보다 작은 개선은 float 노이즈로 보고 무시
 
-            // 증분 캐시 (O(M·N²) 재계산 회피)
+            // 증분 캐시, O(M*N^2) 재계산 회피
             var rowsArr = new int[rankCount];
             var corrArr = new int[rankCount];
             var diffBuf = new int[rankCount + 1];
@@ -683,7 +660,7 @@ namespace YART
                     foreach (var c in RealChildren(v))
                         if (c.Rank > mcr) mcr = c.Rank;
                     maxCR[v] = mcr;
-                    // 소스 v는 [v.Rank+1, mcr-1]을 관통 (소스당 1개, 허브 버스)
+                    // 소스 v는 [v.Rank+1, mcr-1]을 관통 (허브 버스)
                     int lo2 = v.Rank + 1, hi2 = mcr - 1;
                     if (lo2 <= hi2) { diffBuf[lo2]++; diffBuf[hi2 + 1]--; }
                 }
@@ -691,9 +668,8 @@ namespace YART
                 for (int r = 0; r < rankCount; r++) { run += diffBuf[r]; corrArr[r] = run; }
             }
 
-            // LimitColumnHeights.ColumnHeight와 동일 모델이어야 한다
+            // LimitColumnHeights.ColumnHeight와 같은 모델이어야 함
             float HeightOf(int rows, int corr) => rows * rowReal + corr * rowCorridor;
-            // 한 랭크의 squared-overflow
             float OverflowOf(float h)
             {
                 float over = h - budget;
@@ -704,16 +680,16 @@ namespace YART
             // 소스가 r을 관통하는가
             int Contrib(int rank, int mcr, int r) => (rank < r && mcr > r) ? 1 : 0;
 
-            // v를 oldR→newR(=oldR±1) 이동 시 RankCost delta. 캐시 기반 O(deg).
-            // corridor 영향은 v 자신 + v의 부모(maxChildRank 변동)뿐 — 다른 노드는 상쇄된다.
+            // v를 oldR -> newR(oldR+-1)로 옮길 때의 RankCost 변화량, O(deg)
+            // 통로 변화는 v 자신과 v의 부모에서만 생김
             float DeltaRankCost(ResearchNode v, int oldR, int newR)
             {
-                int mcrV = maxCR[v]; // 자식은 안 움직이므로 v의 max child rank는 불변
+                int mcrV = maxCR[v]; // 자식은 그대로라 불변
 
                 int dCorrOld = Contrib(newR, mcrV, oldR) - Contrib(oldR, mcrV, oldR);
                 int dCorrNew = Contrib(newR, mcrV, newR) - Contrib(oldR, mcrV, newR);
 
-                // v의 부모들: v 이동으로 maxChildRank가 바뀔 수 있다
+                // v 이동으로 부모의 maxChildRank가 바뀔 수 있음
                 foreach (var p in RealPrereqs(v))
                 {
                     int mcrBefore = maxCR[p];
@@ -724,7 +700,7 @@ namespace YART
                     }
                     else
                     {
-                        // v가 p의 최대 자식 → 나머지 자식과 v의 newR로 재계산
+                        // v가 최대 자식이면 나머지 자식과 newR로 재계산
                         int m = newR;
                         foreach (var c in RealChildren(p))
                             if (!ReferenceEquals(c, v) && c.Rank > m) m = c.Rank;
@@ -734,7 +710,7 @@ namespace YART
                     dCorrNew += Contrib(p.Rank, mcrAfter, newR) - Contrib(p.Rank, mcrBefore, newR);
                 }
 
-                // overflow delta — 연산 그룹핑 순서 고정 (결정성)
+                // 결정성을 위해 연산 그룹핑 순서 고정
                 float hOldBefore = HeightOf(rowsArr[oldR],     corrArr[oldR]);
                 float hOldAfter  = HeightOf(rowsArr[oldR] - 1, corrArr[oldR] + dCorrOld);
                 float hNewBefore = HeightOf(rowsArr[newR],     corrArr[newR]);
@@ -743,12 +719,10 @@ namespace YART
                 float dOverflow = (OverflowOf(hOldAfter) + OverflowOf(hNewAfter))
                                 - (OverflowOf(hOldBefore) + OverflowOf(hNewBefore));
 
-                // span delta: prereq당 +(newR−oldR), child당 −(newR−oldR)
                 int dSpan = 0;
                 foreach (var p in RealPrereqs(v)) dSpan += newR - oldR;
                 foreach (var c in RealChildren(v)) dSpan -= newR - oldR;
 
-                // usedRankCount delta: oldR이 비면 −1, newR이 새 랭크면 +1
                 bool oldWillEmpty = rowsArr[oldR] == 1;
                 bool newIsNew = rowsArr[newR] == 0;
                 int dUsed = (newIsNew ? 1 : 0) - (oldWillEmpty ? 1 : 0);
@@ -756,33 +730,32 @@ namespace YART
                 return dOverflow + lambda * dSpan + mu * dUsed;
             }
 
-            // ── 2단계: ±1 greedy 정합 루프 (기존 랭크 구조 안에서만 이동, 밴드 끝 삽입 없음) ──
+            // 2단계: +-1 greedy. 기존 랭크 안에서만 이동하고 랭크 삽입은 없음
             bool warnedMoveCap = false;
             bool improved = true;
             while (improved && movesLeft > 0)
             {
-                RebuildCaches(); // 직전 이터레이션의 커밋 반영
+                RebuildCaches();
                 improved = false;
                 float bestDelta = -EPS; // 엄격히 음수인 이동만 채택
                 ResearchNode bestNode = null;
                 int bestOldR = -1, bestNewR = -1;
 
-                // 위상 순서로 결정적 순회 (tie-break: defName 서수 — 언어 무관)
+                // tie-break는 defName 서수 (언어 무관)
                 foreach (var v in topo)
                 {
                     int r = v.Rank;
                     var band = bands[effectiveTechLevel[v]];
 
-                    // 허용 구간 = [maxPrereq+1, minChild−1] ∩ [band.lo, band.hi]
                     int lo = band.lo;
                     int hi = band.hi;
                     foreach (var p in RealPrereqs(v))
                         if (p.Rank + 1 > lo) lo = p.Rank + 1;
                     foreach (var c in RealChildren(v))
                         if (c.Rank - 1 < hi) hi = c.Rank - 1;
-                    if (hi < lo) continue; // 이동 불가
+                    if (hi < lo) continue;
 
-                    // 왼쪽 이동: 통로를 줄이는 방향이라 MinRows 바닥 가드 불필요
+                    // 왼쪽은 통로를 줄이는 방향이라 MinRows 가드 불필요
                     if (r - 1 >= lo)
                     {
                         int nr = r - 1;
@@ -800,15 +773,14 @@ namespace YART
                         }
                     }
 
-                    // 오른쪽 이동: 기존 랭크 구조 안에서만 (밴드 끝 삽입 없음)
                     if (r + 1 <= hi)
                     {
                         int nr = r + 1;
 
-                        // limiter와 동일 정책 — 시드만 캡하면 refine이 다시 흩뿌린다
+                        // limiter와 같은 정책. 시드만 캡하면 정제가 다시 흩뿌림
                         if (ExceedsMaxEdgeSpan(v, nr)) goto skipRight;
 
-                        // 통로 포화 바닥: 오른쪽 이동으로 실노드가 MinRows 이하로 줄면 금지
+                        // 통로 포화 바닥
                         if (rowsArr[r] <= Constraints.LayoutHeightLimitMinRows) goto skipRight;
 
                         float d = DeltaRankCost(v, r, nr);
@@ -847,7 +819,7 @@ namespace YART
             if (Prefs.DevMode) ValidateRankInvariants(topo, bands);
         }
 
-        /// <summary>밴드 끝(hi) 직후에 빈 랭크 1개 삽입 (후속 랭크/밴드 +1 시프트). 프록시는 아직 미배치라 제외.</summary>
+        /// <summary>밴드 hi 직후에 빈 랭크 삽입. 프록시는 아직 배치 전이라 제외</summary>
         private void InsertRankAfterBand(TechLevel key, Dictionary<TechLevel, (int lo, int hi)> bands)
         {
             int hi = bands[key].hi;
@@ -864,7 +836,6 @@ namespace YART
             }
         }
 
-        /// <summary>DevMode 랭크 불변식 검사 (경고만): 전방 엣지, 실노드 밴드 포함, 밴드 비중첩·오름차순.</summary>
         private void ValidateRankInvariants(IReadOnlyList<ResearchNode> topo, IReadOnlyDictionary<TechLevel, (int lo, int hi)> bands)
         {
             foreach (var v in topo)
@@ -895,16 +866,13 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 프록시(타 트랙 선행의 대리 노드)를 원본 시대 구역 안에 배치: 같은 시대 실밴드가 있으면
-        /// min(자식−1, 밴드.hi)에 클램프, 없으면 첫 상위 실밴드 직전에 전용 컬럼 삽입.
-        /// </summary>
+        /// <summary>프록시(다른 트랙 선행의 대리 노드)를 원본 시대 구역 안에 배치</summary>
         private void PlaceProxies(Dictionary<TechLevel, (int lo, int hi)> bands)
         {
             var proxies = graph.Nodes.Where(n => n.IsProxy).ToList();
             if (proxies.Count == 0) return;
 
-            // 컬럼당 한 시대만 들어가야 AssignX의 컬럼 대표 시대가 오염되지 않는다 (전용 컬럼을 삽입하는 이유)
+            // 전용 컬럼을 넣는 이유: 한 컬럼에 시대가 섞이면 AssignX의 컬럼 대표 시대가 오염됨
             var placed = new HashSet<ResearchNode>();
 
             foreach (var eraGroup in proxies.GroupBy(p => p.TechLevel).OrderBy(g => g.Key))
@@ -918,7 +886,7 @@ namespace YART
                     int minChild = MinChildRank(proxy);
                     if (minChild == int.MaxValue)
                     {
-                        proxy.Rank = 0; // 방어: 자식 없는 프록시
+                        proxy.Rank = 0; // 자식 없는 프록시, 방어용
                         placed.Add(proxy);
                     }
                     else if (hasBand && minChild - 1 >= band.lo)
@@ -933,7 +901,6 @@ namespace YART
                 }
                 if (needColumn.Count == 0) continue;
 
-                // 삽입 지점: 자기 밴드가 있으면 밴드 시작 직전, 없으면 첫 상위 밴드 시작 직전
                 int insertAt;
                 if (hasBand)
                 {
@@ -954,7 +921,7 @@ namespace YART
                     int minChild = MinChildRank(proxy);
                     if (insertAt == int.MaxValue || minChild < insertAt)
                     {
-                        // 자식 시대 ≤ 프록시 시대인 데이터 오류 — 시대 구역 포기, 전방 엣지만 보장
+                        // 자식 시대 <= 프록시 시대인 데이터 오류. 시대 구역은 포기하고 전방 엣지만 보장
                         proxy.Rank = minChild - 1;
                         placed.Add(proxy);
                         continue;
@@ -979,7 +946,7 @@ namespace YART
             }
         }
 
-        /// <summary>같은 그래프 내 자식들의 최소 랭크 (자식 없으면 int.MaxValue).</summary>
+        /// <summary>자식이 없으면 int.MaxValue</summary>
         private int MinChildRank(ResearchNode proxy)
         {
             int min = int.MaxValue;
@@ -990,10 +957,7 @@ namespace YART
             return min;
         }
 
-        /// <summary>
-        /// 사용 중인 랭크를 0..K−1 연속 정수로 재매핑(빈 열 제거)하고 bands의 (lo, hi)도 함께 재매핑.
-        /// 가장자리가 빈 랭크였을 수 있어 안쪽 클램프(lo 이상 첫 사용 / hi 이하 마지막 사용).
-        /// </summary>
+        /// <summary>빈 랭크를 없애 0..K-1로 재매핑. 밴드 가장자리가 빈 랭크였을 수 있어 안쪽으로 클램프</summary>
         private void CompactRanks(Dictionary<TechLevel, (int lo, int hi)> bands)
         {
             var used = graph.Nodes.Select(n => n.Rank).Distinct().OrderBy(r => r).ToList();
@@ -1002,7 +966,7 @@ namespace YART
 
             foreach (var n in graph.Nodes) n.Rank = map[n.Rank];
 
-            // used 리스트의 인덱스가 곧 새 랭크 번호 (map[used[i]] == i)
+            // used의 인덱스가 곧 새 랭크
             foreach (var k in bands.Keys.ToList())
             {
                 var b = bands[k];
@@ -1014,13 +978,10 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 멀티랭크 엣지를 더미 체인으로 분할하되 같은 From의 엣지들은 트렁크를 공유한다 (허브 버스).
-        /// 더미 차수 불변식: in 1 / out ≥ 1 / 더미 자식 ≤ 1.
-        /// </summary>
+        /// <summary>같은 From의 멀티랭크 엣지는 더미 트렁크 하나를 공유(허브 버스). 더미는 in 1, out 1 이상, 더미 자식 최대 1</summary>
         private void NormalizeEdges()
         {
-            // 1패스: 역방향 엣지 드롭 + 멀티랭크 엣지를 소스별 수집 (소스 첫 등장 순서 = 결정성)
+            // 1패스. sourceOrder는 결정성용
             var multiBySource = new Dictionary<ResearchNode, List<ResearchEdge>>();
             var sourceOrder = new List<ResearchNode>();
 
@@ -1034,7 +995,7 @@ namespace YART
 
                 if (rankDiff < 1)
                 {
-                    // 랭크 제약 위반 — 발생하면 안 되지만 레이아웃 보호를 위해 끊는다
+                    // 생기면 안 되지만 레이아웃 보호용으로 끊음
                     Log.Warning($"[YART] Layout: non-forward edge {from.Label} -> {to.Label} (diff={rankDiff}). Dropping.");
                     graph.Edges.Remove(edge);
                     from.Children.Remove(to);
@@ -1051,7 +1012,7 @@ namespace YART
                 list.Add(edge);
             }
 
-            // 2패스: 소스별 공유 트렁크(허브 버스) 생성 — 원본 멀티랭크 엣지는 전부 트렁크 경유로 대체
+            // 2패스: 원본 멀티랭크 엣지를 전부 공유 트렁크 경유로 대체
             foreach (var from in sourceOrder)
             {
                 var edges = multiBySource[from];
@@ -1066,7 +1027,7 @@ namespace YART
                     e.To.Prerequisites.Remove(from);
                 }
 
-                // 공유 트렁크: from.Rank+1 .. maxToRank−1 (멀티랭크 엣지가 있으므로 길이 ≥ 1)
+                // from.Rank+1 .. maxToRank-1, 길이 >= 1
                 var trunk = new ResearchNode[maxToRank - from.Rank - 1];
                 var current = from;
                 for (int r = from.Rank + 1; r < maxToRank; r++)
@@ -1082,7 +1043,7 @@ namespace YART
                     current = dummy;
                 }
 
-                // 각 타깃은 자기 랭크 직전 트렁크 더미에서 분기 (rankDiff ≥ 2 → 인덱스 ≥ 0)
+                // 타깃 랭크 직전 더미에서 분기. rankDiff >= 2라 인덱스 >= 0
                 foreach (var e in edges)
                 {
                     Connect(trunk[e.To.Rank - from.Rank - 2], e.To);
@@ -1092,7 +1053,6 @@ namespace YART
             if (Prefs.DevMode) ValidateNormalizedEdges();
         }
 
-        /// <summary>DevMode 검사(경고만): 더미는 in 1 / out ≥ 1 / 더미 자식 ≤ 1, 엣지는 정확히 한 랭크 전진.</summary>
         private void ValidateNormalizedEdges()
         {
             foreach (var n in graph.Nodes)
@@ -1106,11 +1066,11 @@ namespace YART
                 {
                     Log.Warning($"[YART] Layout: dummy at rank {n.Rank} has no children in {graph.Key}.");
                 }
-                // 더미 자식 ≤ 1 — NextTrunkDown 트렁크 워크 유일성의 근거
+                // NextTrunkDown 트렁크 워크가 유일하려면 더미 자식 <= 1
                 int dummyChildren = Downs(n).Count(c => c.IsDummy);
                 if (dummyChildren > 1)
                 {
-                    // 직속 선행이 더미면 라벨이 비므로 실소스까지 거슬러 올라간다
+                    // 더미는 라벨이 없어 실소스까지 올라감
                     var src = Ups(n).FirstOrDefault();
                     while (src != null && src.IsDummy) src = Ups(src).FirstOrDefault();
                     Log.Warning($"[YART] Layout: dummy at rank {n.Rank} (source '{src?.Label}') has {dummyChildren} dummy children (expected <= 1) in {graph.Key}.");
@@ -1133,11 +1093,7 @@ namespace YART
         }
 
 
-        /// <summary>
-        /// 소스에서 DFS 방문 순으로 레이어를 채운다 (서브트리 군집화 → 교차 최소화 초기해, 고립 노드 제외).
-        /// variant 멀티 스타트: 0 = defName순, 1 = 후속 많은 순, 2 = defName 역순,
-        /// 3 = 서브트리 무게 center-out(무거운 허브를 컬럼 중앙에 — 팬아웃 상단 쏠림 방지).
-        /// </summary>
+        /// <summary>DFS 방문 순으로 채워 서브트리를 군집화. variant 3은 무거운 허브를 중앙에 둬 팬아웃 상단 쏠림 방지</summary>
         private List<List<ResearchNode>> BuildLayers(int variant)
         {
             int rankCount = graph.Nodes.Max(n => n.Rank) + 1;
@@ -1193,7 +1149,7 @@ namespace YART
                 }
             }
 
-            // 방어: 소스에서 도달 불가한 노드 (정상 DAG엔 없음)
+            // 소스에서 도달 불가한 노드, 정상 DAG엔 없음
             foreach (var n in graph.Nodes)
             {
                 if (visited.Add(n)) layers[n.Rank].Add(n);
@@ -1211,10 +1167,7 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 각 노드의 하위 도달 노드 수(자신 제외, 더미 포함) — variant 3 center-out 시드용.
-        /// 모든 엣지가 1랭크 전진하므로 Rank 내림차순 = 역위상 순서 → 1패스 누적으로 충분.
-        /// </summary>
+        /// <summary>자신 제외, 더미 포함. 모든 엣지가 1랭크 전진이라 Rank 내림차순 1패스로 충분</summary>
         private Dictionary<ResearchNode, int> ComputeSubtreeWeights()
         {
             if (subtreeWeight != null) return subtreeWeight;
@@ -1237,7 +1190,7 @@ namespace YART
             return weight;
         }
 
-        /// <summary>가장 무거운 항목을 가운데, 가벼운 항목을 위아래 바깥으로 교대 배치(top→bottom). 동무게는 Id 서수 순.</summary>
+        /// <summary>무거운 항목을 가운데, 가벼운 항목을 위아래 바깥으로 교대 배치</summary>
         private List<ResearchNode> CenterOutByWeight(IEnumerable<ResearchNode> items, Dictionary<ResearchNode, int> weight)
         {
             var sortedDesc = items
@@ -1248,13 +1201,13 @@ namespace YART
             var dq = new LinkedList<ResearchNode>();
             for (int i = 0; i < sortedDesc.Count; i++)
             {
-                if ((i & 1) == 0) dq.AddLast(sortedDesc[i]); // 가장 무거운(i=0) 항목이 중앙
+                if ((i & 1) == 0) dq.AddLast(sortedDesc[i]);
                 else dq.AddFirst(sortedDesc[i]);
             }
             return new List<ResearchNode>(dq);
         }
 
-        /// <summary>차수 0인 고립 노드를 분리 (median 정렬의 장애물이 되지 않게 — 배치는 PlaceIsolated에서).</summary>
+        /// <summary>차수 0 노드를 median 정렬에서 빼 둔다. 배치는 PlaceIsolated</summary>
         private void ExtractIsolated()
         {
             foreach (var n in graph.Nodes)
@@ -1278,16 +1231,11 @@ namespace YART
 
         private static readonly string[] OrderingVariantNames = { "dfs", "degree", "reverse", "weighted" };
 
-        /// <summary>통합 ordering 점수 = 교차 수 + HeightWeight × 높이행수(EstimateMinHeight/gridY).</summary>
         private float OrderingScore(List<List<ResearchNode>> layers, int crossings)
         {
             return crossings + Constraints.LayoutOrderingHeightWeight * (EstimateMinHeight(layers) / GridY);
         }
 
-        /// <summary>
-        /// 교차 최소화: 멀티 스타트(DFS 변형 3종)마다 [wmedian → transpose] 루프를 돌려 OrderingScore
-        /// 최소 순서를 채택하고, 작은 레이어 전수(부분집합 DP) 스윕으로 마무리한다.
-        /// </summary>
         private int MinimizeCrossings(List<List<ResearchNode>> layers)
         {
             float bestScore = float.MaxValue;
@@ -1298,7 +1246,7 @@ namespace YART
                 if (variant > 0) Restore(layers, Snapshot(BuildLayers(variant)));
                 int cross = RunOrderingLoop(layers);
                 float score = OrderingScore(layers, cross);
-                if (score < bestScore) // 동점이면 첫 번째(earlier) 변형 유지 — 결정성 보장
+                if (score < bestScore) // 동점이면 앞 변형 유지 (결정성)
                 {
                     bestScore = score;
                     bestSnap = Snapshot(layers);
@@ -1309,18 +1257,15 @@ namespace YART
 
             ExactSmallLayerSweep(layers);
 
-            // 큰 레이어(DP는 소형 레이어 전용)의 local optimum 탈출 — OrderingScore 가드로 높이 퇴행 방지
+            // DP가 못 다루는 큰 레이어의 국소해 탈출
             return SiftingPass(layers);
         }
 
-        /// <summary>
-        /// 단일 [wmedian → transpose] 루프. stale 카운터(루프 수렴)는 교차 수 기준, 스냅샷 채택은
-        /// 매 반복 OrderingScore 기준 — 교차가 늘어도 높이가 크게 줄면 채택한다. 최선 스냅샷의 교차 수 반환.
-        /// </summary>
+        /// <summary>수렴 판정은 교차 수, 스냅샷 채택은 OrderingScore 기준. 최선 스냅샷의 교차 수 반환</summary>
         private int RunOrderingLoop(List<List<ResearchNode>> layers)
         {
             int initCross = TotalCrossings(layers);
-            // bestScore=최소 OrderingScore, bestCross=그 스냅샷의 교차(반환), bestCrossSoFar=stale용 교차 하한
+            // bestCross는 최선 스냅샷의 교차, bestCrossSoFar는 stale 판정용
             float bestScore = OrderingScore(layers, initCross);
             int bestCross = initCross;
             int bestCrossSoFar = initCross;
@@ -1336,7 +1281,6 @@ namespace YART
 
                 int crossings = TotalCrossings(layers);
 
-                // stale 카운터: 교차 수 기준 (루프 수렴 제어)
                 if (crossings < bestCrossSoFar)
                 {
                     bestCrossSoFar = crossings;
@@ -1347,9 +1291,8 @@ namespace YART
                     stale++;
                 }
 
-                // 스냅샷 채택 기준 = OrderingScore
                 float score = OrderingScore(layers, crossings);
-                if (score < bestScore) // 동점이면 earlier(더 낮은 교차) 스냅샷 유지 — 결정성
+                if (score < bestScore) // 동점이면 앞 스냅샷 유지 (결정성)
                 {
                     bestScore = score;
                     bestCross = crossings;
@@ -1361,11 +1304,7 @@ namespace YART
             return bestCross;
         }
 
-        /// <summary>
-        /// 작은 레이어(≤ LayoutExactLayerMaxNodes) 전수 최적화: 인접 레이어 고정, 레이어 내 순서를
-        /// 부분집합 DP(dp[S] = 상단 |S|칸 최소 교차)로 전역 최소화. 인접쌍 스왑이 못 벗어나는 국소해 탈출.
-        /// 레이어 교체는 전역 OrderingScore 개선 시에만 채택(높이 악화 시 롤백). 개선 없을 때까지 스윕.
-        /// </summary>
+        /// <summary>작은 레이어를 부분집합 DP로 전수 최적화해 transpose의 국소해 탈출. OrderingScore가 나빠지면 롤백</summary>
         private void ExactSmallLayerSweep(List<List<ResearchNode>> layers)
         {
             bool improvedAny = true;
@@ -1392,7 +1331,7 @@ namespace YART
                     {
                         for (int j = i + 1; j < n; j++) current += cost[i, j];
                     }
-                    if (current == 0) continue; // 이미 무교차
+                    if (current == 0) continue;
 
                     int full = 1 << n;
                     var dp = new long[full];
@@ -1419,10 +1358,10 @@ namespace YART
                         }
                     }
 
-                    if (dp[full - 1] >= current) continue; // 교차 개선 없음 — 순서 유지
+                    if (dp[full - 1] >= current) continue;
 
                     float scoreBefore = OrderingScore(layers, TotalCrossings(layers));
-                    var saved = CaptureLayerOrder(layer); // 높이 퇴행 시 롤백용
+                    var saved = CaptureLayerOrder(layer);
 
                     var order = new ResearchNode[n];
                     int cur = full - 1;
@@ -1443,13 +1382,12 @@ namespace YART
                     }
                     else
                     {
-                        RestoreLayerOrder(layer, saved); // 교차는 줄었으나 높이 비용이 상쇄
+                        RestoreLayerOrder(layer, saved); // 교차는 줄었지만 높이 비용이 상쇄
                     }
                 }
             }
         }
 
-        /// <summary>레이어의 현재 순서와 VOrder를 롤백용으로 저장한다.</summary>
         private static (ResearchNode[] order, int[] vOrders) CaptureLayerOrder(List<ResearchNode> layer)
         {
             var order = layer.ToArray();
@@ -1458,7 +1396,6 @@ namespace YART
             return (order, vOrders);
         }
 
-        /// <summary>CaptureLayerOrder로 저장한 순서/VOrder를 되돌린다.</summary>
         private static void RestoreLayerOrder(List<ResearchNode> layer, (ResearchNode[] order, int[] vOrders) saved)
         {
             layer.Clear();
@@ -1479,7 +1416,7 @@ namespace YART
             SyncVOrder(layers);
         }
 
-        /// <summary>DOT의 wmedian 스윕 ("weighted"는 median value 보간을 뜻함 — 엣지 종류별 가중치 아님).</summary>
+        /// <summary>DOT의 wmedian. weighted는 median 보간을 뜻하며 엣지 가중치가 아님</summary>
         private void WMedian(List<List<ResearchNode>> layers, bool forward)
         {
             if (forward)
@@ -1495,10 +1432,7 @@ namespace YART
         private void ReorderByMedian(List<ResearchNode> layer, bool useUp)
             => ReorderRangeByMedian(layer, 0, layer.Count, useUp);
 
-        /// <summary>
-        /// layer의 [start, start+len) 구간만 median 순으로 안정 재정렬한다 (구간 경계는 불변).
-        /// 이웃이 없는 노드(median &lt; 0)는 제자리에 고정하고 나머지만 자리를 나눠 갖는다.
-        /// </summary>
+        /// <summary>[start, start+len) 구간만 안정 재정렬. 이웃 없는 노드는 제자리 고정</summary>
         private void ReorderRangeByMedian(List<ResearchNode> layer, int start, int len, bool useUp)
         {
             if (len < 2) return;
@@ -1577,11 +1511,7 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// Vertex sifting: 각 노드를 레이어 내 모든 위치로 통과시켜 최소 교차 자리에 안착시킨다.
-        /// 인접쌍 transpose나 소형 레이어 DP가 못 벗어나는 local optimum 탈출용(특히 큰 레이어).
-        /// 레이어 변경은 전역 OrderingScore 개선 시에만 채택하고 높이 퇴행이면 롤백한다.
-        /// </summary>
+        /// <summary>Vertex sifting으로 큰 레이어의 국소해 탈출. OrderingScore가 나빠지면 롤백</summary>
         private int SiftingPass(List<List<ResearchNode>> layers)
         {
             bool improvedAny = true;
@@ -1607,14 +1537,9 @@ namespace YART
             return TotalCrossings(layers);
         }
 
-        /// <summary>레이어 전체를 sifting. 바뀌었으면 true.</summary>
         private bool SiftLayer(List<ResearchNode> layer) => SiftRange(layer, 0, layer.Count);
 
-        /// <summary>
-        /// 레이어의 [lo, hi) 구간을 sifting: 각 노드를 구간 내 모든 위치로 슬라이드하며 누적 교차를
-        /// 추적해 최소 자리로 옮긴다. cost[i,j](= nodes[i]가 nodes[j] 위일 때 교차)는 인접 레이어
-        /// VOrder만 보므로 구간을 섞어도 불변 → 한 번만 계산한다. 바뀌었으면 true.
-        /// </summary>
+        /// <summary>cost는 인접 레이어 VOrder만 보므로 구간을 섞어도 불변이라 한 번만 계산. 바뀌었으면 true</summary>
         private bool SiftRange(List<ResearchNode> layer, int lo, int hi)
         {
             int len = hi - lo;
@@ -1641,12 +1566,12 @@ namespace YART
                 foreach (var x in work)
                     if (!ReferenceEquals(x, v)) others.Add(x);
 
-                // v를 맨 위(p=0)에 둘 때 교차 = Σ cost[v, other]
+                // p=0(맨 위)일 때 교차 = sum cost[v, other]
                 long running = 0;
                 for (int j = 0; j < others.Count; j++) running += cost[vi, index[others[j]]];
                 long best = running;
                 int bestP = 0;
-                // p가 늘면 v가 others[p-1] 아래로 — 그 쌍 기여가 cost[v,w] → cost[w,v]로 바뀜
+                // p가 늘면 v가 others[p-1] 아래로 가서 그 쌍 기여가 cost[v,w]에서 cost[w,v]로 바뀜
                 for (int p = 1; p <= others.Count; p++)
                 {
                     int wi = index[others[p - 1]];
@@ -1671,7 +1596,7 @@ namespace YART
             return changed;
         }
 
-        /// <summary>a가 b 위(작은 VOrder)에 있을 때 두 노드의 엣지끼리 발생하는 교차 수</summary>
+        /// <summary>a가 b 위에 있을 때 두 노드 엣지 간 교차 수</summary>
         private int PairCrossings(ResearchNode a, ResearchNode b)
         {
             int crossings = 0;
@@ -1702,7 +1627,7 @@ namespace YART
             return total;
         }
 
-        /// <summary>두 인접 레이어 간 교차 수 — BIT(펜윅 트리) 역전쌍 카운트, O(E log V)</summary>
+        /// <summary>펜윅 트리 역전쌍 카운트, O(E log V)</summary>
         private int CountCrossings(List<ResearchNode> upper, List<ResearchNode> lower)
         {
             if (upper.Count == 0 || lower.Count == 0) return 0;
@@ -1733,7 +1658,7 @@ namespace YART
 
         private static string GroupOf(ResearchNode n) => string.IsNullOrEmpty(n.GroupKey) ? "(none)" : n.GroupKey;
 
-        /// <summary>layer[start]와 같은 그룹이 연속되는 블록의 끝 인덱스(배타).</summary>
+        /// <summary>같은 그룹 연속 블록의 끝 (exclusive)</summary>
         private static int GroupBlockEnd(List<ResearchNode> layer, int start)
         {
             string g = GroupOf(layer[start]);
@@ -1742,7 +1667,6 @@ namespace YART
             return end;
         }
 
-        /// <summary>그룹 순서 산정 → 띠 시드 → 띠 내부 교차최소화 → 그룹 순서 국소탐색 → 띠 내부 재최적화.</summary>
         private void ApplyGroupClustering(List<List<ResearchNode>> layers)
         {
             ComputeGroupOrder();
@@ -1754,14 +1678,14 @@ namespace YART
             SyncVOrder(layers);
         }
 
-        /// <summary>그룹 세로 순서를 swap/insertion 국소탐색으로 개선한다 (평가 = 전체 교차 수).</summary>
+        /// <summary>swap/insertion 국소탐색, 평가는 전체 교차 수</summary>
         private void RefineGroupOrderBySearch(List<List<ResearchNode>> layers)
         {
             var order = groupOrderIndex.OrderBy(kv => kv.Value).Select(kv => kv.Key).ToList();
             int m = order.Count;
             if (m < 3) return;
 
-            // 띠 내부 상대순서 고정 — 그룹 순서만 바꿔 가며 비교하기 위해
+            // 그룹 순서만 바꿔 비교하려고 띠 내부 순서를 고정
             var localIndex = new Dictionary<ResearchNode, int>(graph.Nodes.Count);
             foreach (var layer in layers)
             {
@@ -1801,7 +1725,6 @@ namespace YART
             {
                 improved = false;
 
-                // pairwise swap
                 for (int i = 0; i < m; i++)
                 {
                     for (int j = i + 1; j < m; j++)
@@ -1813,7 +1736,6 @@ namespace YART
                     }
                 }
 
-                // insertion
                 for (int i = 0; i < m; i++)
                 {
                     for (int j = 0; j < m; j++)
@@ -1829,7 +1751,7 @@ namespace YART
                 }
             }
 
-            Restack(best); // 레이어를 최선 순서로 확정
+            Restack(best); // 레이어에 반영
             var newOrder = new Dictionary<string, int>(m);
             for (int i = 0; i < m; i++) newOrder[best[i]] = i;
             groupOrderIndex = newOrder;
@@ -1894,7 +1816,6 @@ namespace YART
             }
         }
 
-        /// <summary>그룹 경계를 넘지 않는 wmedian 스윕 — 각 그룹 블록 내부에서만 median 재정렬.</summary>
         private void GroupWMedian(List<List<ResearchNode>> layers, bool forward)
         {
             if (forward)
@@ -1903,10 +1824,7 @@ namespace YART
                 for (int r = layers.Count - 2; r >= 0; r--) ReorderWithinGroups(layers[r], useUp: false);
         }
 
-        /// <summary>
-        /// 같은 그룹의 연속 블록마다 블록 내부에서만 median 재정렬 — 블록 경계가 불변이므로
-        /// EnforceGroupContiguity가 만든 띠 구조가 보존된다.
-        /// </summary>
+        /// <summary>블록 경계는 그대로라 EnforceGroupContiguity의 띠 구조가 보존됨</summary>
         private void ReorderWithinGroups(List<ResearchNode> layer, bool useUp)
         {
             int n = layer.Count;
@@ -1923,7 +1841,7 @@ namespace YART
 
         private void ComputeGroupOrder()
         {
-            // 그룹별 cross-degree = 그룹을 넘나드는 엣지 수
+            // cross-degree = 그룹을 넘나드는 엣지 수
             var deg = new Dictionary<string, int>();
             foreach (var n in graph.Nodes)
                 if (!deg.ContainsKey(GroupOf(n))) deg[GroupOf(n)] = 0;
@@ -1934,12 +1852,12 @@ namespace YART
                 deg[gf]++; deg[gt]++;
             }
 
-            // 차수 내림차순(타이브레이크 서수) → 허브를 중앙, 나머지를 양쪽으로 교대
+            // 허브를 중앙에, 나머지는 양쪽으로 교대
             var byDeg = deg.Keys.OrderByDescending(g => deg[g]).ThenBy(g => g, StringComparer.Ordinal).ToList();
             var dq = new LinkedList<string>();
             for (int r = 0; r < byDeg.Count; r++)
             {
-                if ((r & 1) == 0) dq.AddLast(byDeg[r]); // 허브(r=0)가 중앙
+                if ((r & 1) == 0) dq.AddLast(byDeg[r]);
                 else dq.AddFirst(byDeg[r]);
             }
 
@@ -1958,13 +1876,12 @@ namespace YART
             }
         }
 
-        /// <summary>각 레이어를 그룹 세로 순서로 안정 정렬 — 같은 그룹이 한 덩어리(연속 런)가 된다.</summary>
         private void EnforceGroupContiguity(List<List<ResearchNode>> layers)
         {
             foreach (var layer in layers)
             {
                 if (layer.Count < 2) continue;
-                // OrderBy는 안정 정렬 → 그룹 내 상대순서(교차 최소화 결과)는 보존
+                // OrderBy는 안정 정렬이라 그룹 내 순서가 보존됨
                 var sorted = layer.OrderBy(n => groupOrderIndex.TryGetValue(GroupOf(n), out int idx) ? idx : int.MaxValue).ToList();
                 layer.Clear();
                 layer.AddRange(sorted);
@@ -1972,7 +1889,6 @@ namespace YART
             }
         }
 
-        /// <summary>그룹 내부에서만 인접 스왑 — 그룹 밴드를 깨지 않고 그룹 안 교차만 정리한다.</summary>
         private void GroupConstrainedTranspose(List<List<ResearchNode>> layers)
         {
             bool improved = true;
@@ -1986,7 +1902,7 @@ namespace YART
                     {
                         var v = layer[i];
                         var w = layer[i + 1];
-                        if (GroupOf(v) != GroupOf(w)) continue; // 그룹 경계는 넘지 않음
+                        if (GroupOf(v) != GroupOf(w)) continue;
                         if (PairCrossings(w, v) < PairCrossings(v, w))
                         {
                             layer[i] = w;
@@ -2000,7 +1916,7 @@ namespace YART
             }
         }
 
-        /// <summary>랭크별 X 좌표 + TechLevel 경계에 간격/구분선 할당 (graph.TechLevelBoundaries 채움).</summary>
+        /// <summary>graph.TechLevelBoundaries도 채움</summary>
         private float[] AssignX(List<List<ResearchNode>> layers)
         {
             int rankCount = layers.Count;
@@ -2014,7 +1930,7 @@ namespace YART
 
             for (int r = 0; r < rankCount; r++)
             {
-                // 랭크 대표 TechLevel: 실제 노드의 유효 TechLevel 최대값 (더미/프록시 제외, 없으면 직전 값 유지)
+                // 랭크 대표 시대 = 실노드 유효 TechLevel 최대값, 없으면 직전 값
                 TechLevel tl = lastTechLevel;
                 bool hasReal = false;
                 foreach (var n in layers[r])
@@ -2023,8 +1939,7 @@ namespace YART
                     hasReal = true;
                     if (effectiveTechLevel.TryGetValue(n, out var etl) && etl > tl) tl = etl;
                 }
-                // 프록시 전용 컬럼만 원본 시대를 반영. 시대 없는 그래프에선 프록시도 기여 안 함
-                // (외부 선행 하나로 전체가 칠해지는 문제 방지).
+                // 프록시 전용 컬럼만 원본 시대를 반영. 시대 없는 그래프가 외부 선행 하나로 전부 칠해지지 않게
                 if (!hasReal && graphHasEras)
                 {
                     foreach (var n in layers[r])
@@ -2033,7 +1948,7 @@ namespace YART
                         if (n.TechLevel > tl) tl = n.TechLevel;
                     }
                 }
-                // 고립 노드도 포함 — 밴드 시작 컬럼이 고립 노드뿐일 수 있다
+                // 밴드 시작 컬럼이 고립 노드뿐일 수 있음
                 if (isolatedNodesByRank.TryGetValue(r, out var isolatedHere))
                 {
                     foreach (var n in isolatedHere)
@@ -2056,7 +1971,7 @@ namespace YART
                 if (firstRank)
                 {
                     currentX = 0f;
-                    // 첫 시대도 경계 등록 — 시작 시대에도 구분선/라벨/틴트가 표시되게
+                    // 시작 시대에도 구분선/라벨/틴트가 나오게 경계 등록
                     if (tl != TechLevel.Undefined)
                     {
                         graph.TechLevelBoundaries[tl] =
@@ -2079,7 +1994,7 @@ namespace YART
             float gridY = GridY;
             var finalY = SpringRelaxY(layers);
 
-            // 실노드 기준 수직 중앙 정렬. 그리드 스냅도 실노드만(더미는 좁은 통로 간격 유지).
+            // 실노드 기준 중앙 정렬. 더미는 좁은 통로 간격 유지를 위해 스냅하지 않음
             float minY = float.MaxValue, maxY = float.MinValue;
             foreach (var node in graph.Nodes)
             {
@@ -2094,26 +2009,35 @@ namespace YART
             {
                 if (isolatedNodesSet.Contains(node)) continue;
                 float y = finalY[node] - mid;
-                // round-half-up 유지 — Mathf.Round는 은행가 반올림이라 x.5 경계 두 노드가 한 행으로 합쳐짐
+                // Mathf.Round는 은행가 반올림이라 x.5 경계의 두 노드가 한 행으로 합쳐짐
                 float placed = node.IsDummy ? y : Mathf.Floor(y / gridY + 0.5f) * gridY;
                 node.Position = new Vector2(rankX[node.Rank], placed);
             }
 
-            // 더미 체인 성형 → 잔여 분리 위반 해소 (실노드는 그리드 고정, 더미만 이동)
+            // 1행 간격 두 실노드가 둘 다 반 칸 경계면 float 오차로 같은 행에 떨어지므로 레이어 순서대로 행을 엄격히 늘림
+            foreach (var layer in layers)
+            {
+                float prevY = float.NegativeInfinity;
+                foreach (var node in layer)
+                {
+                    if (node.IsDummy || isolatedNodesSet.Contains(node)) continue;
+                    if (node.Position.y < prevY + gridY - 0.5f)
+                        node.Position = new Vector2(node.Position.x, prevY + gridY);
+                    prevY = node.Position.y;
+                }
+            }
+
+            // 실노드는 그리드 고정, 더미만 이동
             ShapeChains(layers);
             ResolveDummyRuns(layers);
         }
 
-        /// <summary>
-        /// 자식 없는 말단 실노드를 들어오는 이웃에 가장 가까운 그리드 행으로 당겨, 그리드 스냅이 만든
-        /// 끝단 꺾임(…→Y1→Y1→Y2)을 없앤다. 이동 대상은 그리드 행이며 그 행이 레이어 내 빈 슬롯일 때만
-        /// 움직이므로 겹침이 생기지 않는다.
-        /// </summary>
+        /// <summary>말단 실노드를 들어오는 이웃 쪽 그리드 행으로 당겨 스냅이 만든 끝단 꺾임을 없앤다. 빈 슬롯일 때만 이동</summary>
         private void AlignTerminalLeavesToIncoming(List<List<ResearchNode>> layers)
         {
             float gridY = GridY;
 
-            // 2패스: 한쪽 이웃이 먼저 비워준 슬롯을 반대 패스가 활용
+            // 2패스: 앞 패스에서 비워진 슬롯을 다음 패스가 씀
             for (int pass = 0; pass < 2; pass++)
             {
                 foreach (var layer in layers)
@@ -2121,18 +2045,18 @@ namespace YART
                     foreach (var v in layer)
                     {
                         if (v.IsDummy || v.IsProxy) continue;
-                        if (Downs(v).Any()) continue;          // 출고 엣지가 없어야 이동해도 새 꺾임이 안 생긴다
+                        if (Downs(v).Any()) continue;          // 나가는 엣지가 있으면 새 꺾임이 생김
                         if (isolatedNodesSet.Contains(v)) continue;
 
                         float sum = 0f; int deg = 0;
                         foreach (var u in Ups(v)) { sum += u.Position.y; deg++; }
                         if (deg == 0) continue;
-                        float target = sum / deg;              // 단일 더미 체인이면 그 더미의 Y
+                        float target = sum / deg;
 
                         float gridTarget = Mathf.Floor(target / gridY + 0.5f) * gridY;
-                        if (Mathf.Abs(gridTarget - v.Position.y) <= 0.5f) continue; // 이미 그 행
+                        if (Mathf.Abs(gridTarget - v.Position.y) <= 0.5f) continue;
 
-                        // 현재 Y 기준 위/아래 최근접 이웃으로 분리 가능 범위 산출 (리스트 순서 가정 없음)
+                        // 리스트 순서를 가정하지 않고 Y로 위/아래 이웃을 찾음
                         float loBound = float.NegativeInfinity, hiBound = float.PositiveInfinity;
                         foreach (var u in layer)
                         {
@@ -2142,7 +2066,6 @@ namespace YART
                             if (uy >= v.Position.y) { float b = uy - SeparationOf(v, u); if (b < hiBound) hiBound = b; }
                         }
 
-                        // 빈 슬롯일 때만 이동, 아니면 원래 스냅 위치 유지
                         if (gridTarget < loBound - 0.5f || gridTarget > hiBound + 0.5f) continue;
                         v.Position = new Vector2(v.Position.x, gridTarget);
                     }
@@ -2150,13 +2073,13 @@ namespace YART
             }
         }
 
-        /// <summary>반복 바리센터 스프링 + PAV 투영으로 모든 노드(실+더미)의 Y를 결정한다.</summary>
+        /// <summary>바리센터 스프링 + PAV 투영으로 실노드와 더미의 Y 결정</summary>
         private Dictionary<ResearchNode, float> SpringRelaxY(List<List<ResearchNode>> layers)
         {
             float selfAnchor = Constraints.LayoutSpringSelfAnchor;
             int passes = Constraints.LayoutSpringPasses;
-            // Tikhonov 중심 정규화: barycenter 분모에만 더해 각 노드를 0으로 당긴다(드리프트·높이↓).
-            // 엣지 항과 조인트로 최소화되는 단일 볼록해라 후처리 시프트와 달리 fault-line이 없다.
+            // Tikhonov 중심 정규화. barycenter 분모에만 더해 노드를 0으로 당김
+            // 엣지 항과 함께 최소화되므로 후처리 시프트와 달리 fault-line이 없음
             float centerAnchor = Constraints.LayoutSpringCenterAnchor;
 
             // 1단계: 레이어별 비겹침 초기 Y
@@ -2171,7 +2094,7 @@ namespace YART
                 }
             }
 
-            // 2단계: Gauss-Seidel 스프링 + PAV 투영 (desired/prefix는 최대 레이어 크기로 재사용하는 버퍼)
+            // 2단계: Gauss-Seidel 스프링 + PAV 투영
             int maxLayerSize = 0;
             foreach (var layer in layers)
                 if (layer.Count > maxLayerSize) maxLayerSize = layer.Count;
@@ -2179,8 +2102,8 @@ namespace YART
             var desired = new float[maxLayerSize];
             var prefix = new float[maxLayerSize];
 
-            // 높이 하한 = 가장 빽빽한 레이어의 박스 스팬. centerAnchor를 이 슬랙에 비례시켜
-            // 하한에 가까운 그래프는 λ→0으로 자동 무효화하고, 여유 있는 그래프만 당긴다.
+            // 높이 하한 = 가장 빽빽한 레이어의 박스 스팬
+            // centerAnchor를 하한 대비 슬랙에 비례시켜 여유 있는 그래프만 당김
             float hFloor = 0f;
             foreach (var layer in layers)
             {
@@ -2205,10 +2128,9 @@ namespace YART
 
             for (int pass = 0; pass < passes; pass++)
             {
-                bool forward = (pass % 2 == 0); // 순회 방향 교대 — 빠른 수렴
+                bool forward = (pass % 2 == 0); // 방향 교대로 빨리 수렴
                 int layerCount = layers.Count;
 
-                // 적응형 λ: 하한 대비 여유를 [0,1] 슬랙비로
                 float slackRatio = hFloor > 1e-3f ? Mathf.Clamp((CurHeight() - hFloor) / hFloor, 0f, 1f) : 0f;
                 float lambdaEff = centerAnchor * slackRatio;
 
@@ -2219,15 +2141,13 @@ namespace YART
                     int n = layer.Count;
                     if (n == 0) continue;
 
-                    // desired[v] = (현재Y·selfAnchor + Σ 이웃Y) / (selfAnchor + lambdaEff + Σ 엣지가중)
                     for (int i = 0; i < n; i++)
                     {
                         var v = layer[i];
                         float sum = finalY[v] * selfAnchor;
                         float weight = selfAnchor + lambdaEff;
 
-                        // 그룹 클러스터링 시 띠 횡단 엣지는 약하게 가중 → 노드가 제 띠 이웃을 따라가
-                        // 띠가 평평해지고, 횡단 엣지만 혼자 길게 그려진다 (slant 국소화).
+                        // 그룹 모드에서 띠 횡단 엣지는 약하게 가중. 띠가 평평해지고 횡단 엣지만 길게 그려짐
                         bool grouped = GroupClusteringEnabled;
                         float crossW = Constraints.LayoutGroupCrossEdgeWeight;
                         string gv = grouped ? GroupOf(v) : null;
@@ -2247,8 +2167,7 @@ namespace YART
                         desired[i] = sum / weight;
                     }
 
-                    // PAV 투영: 가변 갭 prefix를 빼 잔차로 만들고 비감소 등온 회귀 후 prefix 복원
-                    // → y[i+1] ≥ y[i] + sep 보장.
+                    // 가변 갭 prefix를 빼고 비감소 회귀 후 복원해 y[i+1] >= y[i] + sep 보장
                     prefix[0] = 0f;
                     for (int i = 1; i < n; i++)
                         prefix[i] = prefix[i - 1] + SeparationOf(layer[i - 1], layer[i]);
@@ -2258,7 +2177,7 @@ namespace YART
 
                     SpringPavProject(desired, n);
 
-                    // 음수 클램프 금지 — 음수 Y도 정상 좌표라 y≥0 강제는 레이어 간 정렬을 깬다
+                    // 음수 Y도 정상 좌표. 0으로 클램프하면 레이어 간 정렬이 깨짐
                     for (int i = 0; i < n; i++)
                     {
                         finalY[layer[i]] = desired[i] + prefix[i];
@@ -2270,13 +2189,9 @@ namespace YART
         }
 
 
-        /// <summary>
-        /// 균일-가중 PAV (비감소 등온 회귀, L2 최소화): buf[0..count-1]를 in-place로 비감소 블록 평균
-        /// 수열로 바꾼다. 블록 스택을 유지하며 단조 위반 시 가중 평균으로 머지, O(n) amortized.
-        /// </summary>
+        /// <summary>균일 가중 PAV(비감소 등온 회귀) in-place, O(n) amortized</summary>
         private static void SpringPavProject(float[] buf, int count)
         {
-            // 블록 스택 (start, end, sum, weight)
             var sStart  = new int[count];
             var sEnd    = new int[count];
             var sSum    = new float[count];
@@ -2291,7 +2206,6 @@ namespace YART
                 sWeight[top] = 1f;
                 top++;
 
-                // 앞 블록 avg > 뒤 블록 avg면 앞 블록에 흡수
                 while (top >= 2)
                 {
                     float avgPrev = sSum[top - 2] / sWeight[top - 2];
@@ -2305,7 +2219,7 @@ namespace YART
                 }
             }
 
-            // 잔차는 음수일 수 있으므로 클램프 없이 블록 평균으로 덮어쓴다
+            // 잔차는 음수일 수 있으니 클램프하지 않음
             for (int b = 0; b < top; b++)
             {
                 float avg = sSum[b] / sWeight[b];
@@ -2314,7 +2228,7 @@ namespace YART
             }
         }
 
-        /// <summary>DevMode: 시각적 겹침(노드 박스 침범)만 검사 — 스냅 ±gridY/2 오차는 허용.</summary>
+        /// <summary>박스가 실제로 겹칠 때만 경고. 스냅 오차 +-gridY/2는 허용</summary>
         private void ValidateLayerSeparation(List<List<ResearchNode>> layers)
         {
             if (!Prefs.DevMode) return;
@@ -2333,16 +2247,15 @@ namespace YART
             }
         }
 
-        /// <summary>패킹 유닛: 실노드 1개 또는 더미 체인 전체. EstimateMinHeight의 최소 높이 추정에서 사용.</summary>
+        /// <summary>실노드 1개 또는 더미 체인 전체. EstimateMinHeight용</summary>
         private class LayoutUnit
         {
             public readonly List<ResearchNode> Members = new List<ResearchNode>();
             public readonly List<(LayoutUnit unit, float sep)> Above = new List<(LayoutUnit, float)>();
             public readonly List<(LayoutUnit unit, float sep)> Below = new List<(LayoutUnit, float)>();
-            public readonly List<LayoutUnit> Linked = new List<LayoutUnit>(); // 엣지로 연결된 유닛
+            public readonly List<LayoutUnit> Linked = new List<LayoutUnit>();
         }
 
-        /// <summary>패킹 유닛 그래프 구성: 유닛 생성 + 레이어 내 인접 분리 제약(Above/Below)과 엣지 연결(Linked).</summary>
         private List<LayoutUnit> BuildUnits(List<List<ResearchNode>> layers, out Dictionary<ResearchNode, LayoutUnit> unitOf)
         {
             unitOf = new Dictionary<ResearchNode, LayoutUnit>();
@@ -2357,7 +2270,7 @@ namespace YART
                     var unit = new LayoutUnit();
                     if (node.IsDummy)
                     {
-                        // 체인 머리까지 거슬러 올라간 뒤 트렁크 전체를 한 유닛으로 수집
+                        // 트렁크 전체가 한 유닛
                         var cur = ChainHeadOf(node);
                         while (cur != null)
                         {
@@ -2401,16 +2314,13 @@ namespace YART
             return units;
         }
 
-        /// <summary>
-        /// 현재 레이어 순서의 최소 배치 높이 추정 (유닛 분리 제약의 packUp 임계 경로). 멀티 스타트
-        /// 선택 점수의 높이 항(LayoutOrderingHeightWeight). 사이클은 결정적으로 끊어 항상 비교 가능.
-        /// </summary>
+        /// <summary>현재 순서의 최소 배치 높이 추정. 사이클은 결정적으로 끊어 항상 비교 가능</summary>
         private float EstimateMinHeight(List<List<ResearchNode>> layers)
         {
             var units = BuildUnits(layers, out _);
             if (units.Count == 0) return 0f;
 
-            // AssignY 이전이라 좌표가 없다 — 스윕 순서는 사이클 허용 위상 순서
+            // AssignY 이전이라 좌표가 없어 위상 순서로 스윕
             var yUp = SweepPackUp(CycleTolerantUnitOrder(units));
             float max = 0f;
             foreach (var v in yUp.Values)
@@ -2420,7 +2330,7 @@ namespace YART
             return max;
         }
 
-        /// <summary>유닛 분리 제약 그래프의 사이클 허용 위상 순서 (큐가 마르면 units 인덱스 최소 유닛을 강제 해제).</summary>
+        /// <summary>큐가 비면 units 인덱스가 가장 작은 유닛을 강제로 꺼내 사이클을 끊음</summary>
         private static List<LayoutUnit> CycleTolerantUnitOrder(List<LayoutUnit> units)
         {
             var indeg = new Dictionary<LayoutUnit, int>(units.Count);
@@ -2440,7 +2350,7 @@ namespace YART
                 LayoutUnit next = null;
                 while (ready.Count > 0)
                 {
-                    // 강제 해제된 유닛이 뒤늦게 indeg 0이 되어 다시 들어올 수 있다 — 중복 무시
+                    // 강제로 꺼낸 유닛이 나중에 indeg 0으로 다시 들어올 수 있음
                     var c = ready.Dequeue();
                     if (!ordered.Contains(c)) { next = c; break; }
                 }
@@ -2460,7 +2370,7 @@ namespace YART
             return order;
         }
 
-        /// <summary>처리 순서를 따라 위쪽 제약만 누적하는 packUp 스윕 (아직 미처리인 위 파트너 제약은 건너뛴다).</summary>
+        /// <summary>아직 처리 안 된 위쪽 파트너의 제약은 건너뜀</summary>
         private static Dictionary<LayoutUnit, float> SweepPackUp(List<LayoutUnit> order)
         {
             var yUp = new Dictionary<LayoutUnit, float>(order.Count);
@@ -2476,7 +2386,7 @@ namespace YART
             return yUp;
         }
 
-        /// <summary>모든 더미 체인(트렁크 — 머리→꼬리 순)을 수집. NextTrunkDown으로 트렁크만 따라간다.</summary>
+        /// <summary>더미 트렁크를 머리부터 꼬리 순으로 수집</summary>
         private List<List<ResearchNode>> CollectChains()
         {
             var chains = new List<List<ResearchNode>>();
@@ -2498,45 +2408,41 @@ namespace YART
             return chains;
         }
 
-        /// <summary>UntangleChains의 멀티-랭크 스왑 단위 = 더미 체인(+ 단일 타깃이면 종착 실노드; 분기 트렁크는 더미만).</summary>
+        /// <summary>UntangleChains의 스왑 단위. 단일 타깃이면 종착 실노드까지 포함</summary>
         private class Strip
         {
             public readonly List<ResearchNode> Members = new List<ResearchNode>(); // 연속 랭크 순
             public int StartRank;
-            public float DestY; // 목적지 행 = 분기 타깃들의 median 행 (첫 AssignY 결과, 단일 타깃이면 그 행)
+            public float DestY; // 타깃들의 median 행, 첫 AssignY 기준
             public int EndRank => StartRank + Members.Count - 1;
             public ResearchNode MemberAt(int rank) => Members[rank - StartRank];
         }
 
-        /// <summary>
-        /// 순서 단계가 남긴 "목적지 행 역전" 해소: 첫 AssignY 좌표로 역전을 찾아 인접 공유 구간을 통째로
-        /// 스왑하고, 경계 교차/통로 수용량이 악화되면 되돌린다. 바뀌었으면 true.
-        /// </summary>
+        /// <summary>순서 단계가 남긴 목적지 행 역전을 인접 구간 스왑으로 푼다. 바뀌었으면 true</summary>
         private bool UntangleChains(List<List<ResearchNode>> layers)
         {
             var strips = new List<Strip>();
             foreach (var chain in CollectChains())
             {
                 var targets = TrunkTargets(chain);
-                if (targets.Count == 0) continue; // 방어: 종착 없는 체인
+                if (targets.Count == 0) continue; // 종착 없는 체인, 방어용
                 var strip = new Strip { StartRank = chain[0].Rank };
                 strip.Members.AddRange(chain);
                 if (targets.Count == 1)
                 {
-                    // 종착 실노드 자리도 스왑 대상에 포함
                     strip.Members.Add(targets[0]);
                     strip.DestY = targets[0].Position.y;
                 }
                 else
                 {
-                    // 분기 트렁크: 타깃은 고정하고 더미 구간만 스왑, 목적지는 median 행
+                    // 분기 트렁크는 타깃을 고정하고 더미만 스왑
                     strip.DestY = TrunkDestY(chain);
                 }
                 strips.Add(strip);
             }
             if (strips.Count < 2) return false;
 
-            // 한 체인이 여러 이웃을 연쇄로 지나칠 수 있어 넉넉히 — 안정되면 조기 종료
+            // 한 체인이 여러 이웃을 연달아 지나칠 수 있어 넉넉히
             int maxPasses = Mathf.Min(16, strips.Count);
             bool changed = false;
             for (int pass = 0; pass < maxPasses; pass++)
@@ -2555,10 +2461,7 @@ namespace YART
             return changed;
         }
 
-        /// <summary>
-        /// 두 스트립이 인접한 연속 구간마다, 위 스트립의 목적지 행이 아래 스트립보다
-        /// 낮으면(역전) 구간 전체를 스왑해 보고 경계 교차가 늘지 않을 때만 채택한다.
-        /// </summary>
+        /// <summary>역전된 인접 구간을 스왑해 보고 경계 교차나 통로 수용량이 나빠지면 되돌림</summary>
         private bool TryUntanglePair(List<List<ResearchNode>> layers, Strip a, Strip b)
         {
             int first = Mathf.Max(a.StartRank, b.StartRank);
@@ -2591,7 +2494,7 @@ namespace YART
                     int beforeCross = BoundaryCrossings(layers, r, end - 1);
                     int beforeBad = InfeasibleRuns(layers, r, end - 1);
                     SwapRun(layers, a, b, r, end - 1);
-                    // 교차가 늘거나 수용량 없는 통로로 밀려 들어가면(겹침 영구화) 거부
+                    // 수용량 없는 통로로 들어가면 겹침이 남음
                     if (BoundaryCrossings(layers, r, end - 1) > beforeCross
                         || InfeasibleRuns(layers, r, end - 1) > beforeBad)
                     {
@@ -2607,7 +2510,7 @@ namespace YART
             return swapped;
         }
 
-        /// <summary>[s..e]에서 위/아래가 실노드로 막힌 더미 런 중 완화 간격으로도 안 들어가는(수용량 초과) 런의 수.</summary>
+        /// <summary>위아래가 실노드로 막혀 완화 간격으로도 안 들어가는 더미 런 수</summary>
         private int InfeasibleRuns(List<List<ResearchNode>> layers, int s, int e)
         {
             int bad = 0;
@@ -2637,7 +2540,7 @@ namespace YART
             return bad;
         }
 
-        /// <summary>구간 [s..e]의 양 끝 바깥 경계를 포함한 인접 레이어 교차 수 합.</summary>
+        /// <summary>[s..e] 바깥 경계 포함</summary>
         private int BoundaryCrossings(List<List<ResearchNode>> layers, int s, int e)
         {
             int from = Mathf.Max(0, s - 1);
@@ -2650,7 +2553,6 @@ namespace YART
             return total;
         }
 
-        /// <summary>구간 [s..e]에서 두 스트립의 멤버 자리를 레이어/VOrder 양쪽 모두 교환.</summary>
         private static void SwapRun(List<List<ResearchNode>> layers, Strip a, Strip b, int s, int e)
         {
             for (int r = s; r <= e; r++)
@@ -2666,7 +2568,6 @@ namespace YART
             }
         }
 
-        /// <summary>전체 레이어에서 인접 쌍이 SeparationOf 미만으로 겹친 쌍의 수.</summary>
         private int CountSeparationViolations(List<List<ResearchNode>> layers)
         {
             int count = 0;
@@ -2681,7 +2582,7 @@ namespace YART
             return count;
         }
 
-        /// <summary>체인 목록 전체의 bend 수 (= 더미 Y 시퀀스 ΔY 부호 전환). ShapeChains 패스별 진동 비용으로도 사용.</summary>
+        /// <summary>bend = 더미 Y 변화량의 부호 전환</summary>
         private int CountAllChainBends(List<List<ResearchNode>> chains)
         {
             float eps = Constraints.MetricsBendEpsilon;
@@ -2705,7 +2606,7 @@ namespace YART
             return total;
         }
 
-        /// <summary>더미 Y를 양자화한 FNV-1a 해시 — ShapeChains 사이클 감지용.</summary>
+        /// <summary>양자화한 더미 Y의 FNV-1a 해시, ShapeChains 사이클 감지용</summary>
         private static int HashDummyPositions(List<List<ResearchNode>> chains)
         {
             float q = Constraints.LayoutChainHashQuantum;
@@ -2721,7 +2622,6 @@ namespace YART
             return (int)hash;
         }
 
-        /// <summary>모든 더미 Y를 chain 순 flat array로 스냅샷 (복원은 RestoreDummySnapshot).</summary>
         private static float[] SnapshotDummyPositions(List<List<ResearchNode>> chains)
         {
             int total = 0;
@@ -2734,7 +2634,6 @@ namespace YART
             return snap;
         }
 
-        /// <summary>SnapshotDummyPositions로 저장한 스냅샷을 노드에 복원.</summary>
         private static void RestoreDummySnapshot(List<List<ResearchNode>> chains, float[] snap)
         {
             int idx = 0;
@@ -2747,11 +2646,7 @@ namespace YART
                 }
         }
 
-        /// <summary>
-        /// 스냅 이후 체인 성형: 더미 체인을 랭크별 이동 창 안에서 최소 꺾임 폴리라인으로 맞추고 왕복
-        /// 스윕으로 수렴시킨다. 해시로 사이클을 감지하고 최저 bend 스냅샷을 보존한다(비정상 종료 시 복원).
-        /// 잔여 분리 위반은 ResolveDummyRuns 몫.
-        /// </summary>
+        /// <summary>스냅 후 더미 체인을 이동 창 안에서 최소 꺾임으로 맞춘다. 남은 분리 위반은 ResolveDummyRuns 몫</summary>
         private void ShapeChains(List<List<ResearchNode>> layers)
         {
             var chains = CollectChains();
@@ -2769,7 +2664,6 @@ namespace YART
             bool cycleDetected = false;
             int finalMovedCount = 0;
 
-            // 최대 진폭이 eps 아래로 떨어질 때까지 (또는 패스 상한)
             for (int pass = 0; pass < Constraints.LayoutChainShapeMaxPasses; pass++)
             {
                 bool forward = pass % 2 == 0;
@@ -2782,7 +2676,7 @@ namespace YART
                 }
                 finalMovedCount = movedCount;
 
-                // strict < — 동률이면 최초 상태를 유지한다
+                // 동률이면 최초 상태 유지
                 int curBend = CountAllChainBends(chains);
                 if (curBend < bestBend)
                 {
@@ -2790,7 +2684,7 @@ namespace YART
                     bestSnap = SnapshotDummyPositions(chains);
                 }
 
-                if (movedCount == 0) break; // 수렴 — 현재 상태가 곧 결과
+                if (movedCount == 0) break;
 
                 int h = HashDummyPositions(chains);
                 if (!seenHashes.Add(h))
@@ -2800,33 +2694,30 @@ namespace YART
                 }
             }
 
-            // 복원은 비정상 종료(사이클/패스 소진) 시에만 — 정상 수렴은 고정점이라 손대면 오히려 회귀한다
+            // 사이클이나 패스 소진 때만 복원. 정상 수렴은 고정점이라 복원하면 오히려 회귀함
             bool abnormalExit = cycleDetected || finalMovedCount > 0;
             if (abnormalExit) RestoreDummySnapshot(chains, bestSnap);
 
             lastNonConvergedChains = (finalMovedCount == 0 && !cycleDetected) ? 0 : finalMovedCount;
         }
 
-        /// <summary>
-        /// 체인 하나를 랭크별 창 [lo, hi] 안에서 최소 꺾임으로 배치 (suffix=도착 행 / prefix=출발 행 휴리스틱).
-        /// 이번 호출에서 움직인 멤버의 최대 |dY| 반환 (LayoutChainConvergeEps 초과 = 미수렴).
-        /// </summary>
+        /// <summary>움직인 멤버의 최대 |dY| 반환</summary>
         private float FitChain(List<ResearchNode> chain, List<List<ResearchNode>> layers)
         {
             int n = chain.Count;
             var src = Ups(chain[0]).FirstOrDefault();
             float dstY = TrunkDestY(chain);
-            if (src == null || float.IsNaN(dstY)) return 0f; // 방어: 소스 없음 / 실타깃 0개
+            if (src == null || float.IsNaN(dstY)) return 0f; // 방어용
             float srcY = src.Position.y;
 
-            // 랭크별 이동 창: 같은 레이어 위/아래 이웃과의 분리 제약
+            // 이동 창 = 같은 레이어 위/아래 이웃과의 분리 제약
             var lo = new float[n];
             var hi = new float[n];
             for (int j = 0; j < n; j++)
             {
                 var d = chain[j];
                 var layer = layers[d.Rank];
-                int idx = d.VOrder; // SyncVOrder가 레이어 인덱스와 동기화를 보장
+                int idx = d.VOrder; // SyncVOrder로 레이어 인덱스와 일치
                 lo[j] = idx > 0
                     ? layer[idx - 1].Position.y + SeparationOf(layer[idx - 1], d)
                     : float.NegativeInfinity;
@@ -2835,7 +2726,7 @@ namespace YART
                     : float.PositiveInfinity;
             }
 
-            // suffix/prefix 휴리스틱: 도착 행이 들어가는 최대 접미사 + 그 앞 출발 행이 들어가는 최대 접두사
+            // 뒤쪽은 도착 행이 창에 들어가는 만큼 도착 행에, 그 앞은 출발 행이 들어가는 만큼 출발 행에 맞춤
             int sufFrom = n;
             for (int j = n - 1; j >= 0 && lo[j] <= dstY && dstY <= hi[j]; j--) sufFrom = j;
             int preTo = 0;
@@ -2859,7 +2750,7 @@ namespace YART
             return maxDelta;
         }
 
-        /// <summary>스냅 이후 잔여 분리 위반 해소: 연속 더미 구간을 위/아래 실노드 사이 창에 클램프(안 되면 완화 간격 재시도).</summary>
+        /// <summary>연속 더미 구간을 위아래 실노드 사이에 클램프. 안 되면 완화 간격으로 재시도</summary>
         private void ResolveDummyRuns(List<List<ResearchNode>> layers)
         {
             foreach (var layer in layers)
@@ -2881,17 +2772,14 @@ namespace YART
             }
         }
 
-        /// <summary>
-        /// 더미 구간을 경계 노드 사이에 전방 스윕 클램프(현재 위치 최대 유지, 위반만 해소).
-        /// relaxed면 RelaxOf만큼 빼 시각적 최소 간격으로 시도. 창이 역전되면 변경 없이 false.
-        /// </summary>
+        /// <summary>현재 위치를 최대한 유지하며 위반만 해소. 창이 역전되면 변경 없이 false</summary>
         private static bool TryClampDummyRun(List<ResearchNode> layer, int start, int count,
             ResearchNode above, ResearchNode below, bool relaxed)
         {
             float Sep(ResearchNode a, ResearchNode b)
                 => SeparationOf(a, b) - (relaxed ? RelaxOf(a, b) : 0f);
 
-            // 전방 누적 최소(lo) / 후방 누적 최대(hi) — 경계 실노드는 고정
+            // 경계 실노드는 고정
             var lo = new float[count];
             var hi = new float[count];
             for (int j = 0; j < count; j++)
@@ -2908,7 +2796,6 @@ namespace YART
                 else
                     hi[j] = hi[j + 1] - Sep(layer[start + j], layer[start + j + 1]);
             }
-            // 역전된 창이 하나라도 있으면 배치 불가 — 변경 없이 false
             for (int j = 0; j < count; j++)
             {
                 if (lo[j] > hi[j]) return false;
@@ -2934,17 +2821,14 @@ namespace YART
             return true;
         }
 
-        /// <summary>
-        /// 고립 노드(차수 0)를 같은 시대 밴드 안 컬럼들의 바닥에 그리디 분산한다. 밴드 제한이 시대 구역을
-        /// 지키고, 밴드 안에 자리가 없으면 홈 컬럼 바닥에 초과 스택한다.
-        /// </summary>
+        /// <summary>고립 노드를 같은 시대 밴드 컬럼들의 바닥에 분산. 자리가 없으면 홈 컬럼 바닥에 쌓음</summary>
         private void PlaceIsolated(List<List<ResearchNode>> layers, float[] rankX,
             Dictionary<TechLevel, (int lo, int hi)> bands)
         {
             if (isolatedNodesByRank.Count == 0) return;
             float gridY = GridY;
 
-            // 컬럼별 잔여 예산 — 배치된 노드들의 픽셀 범위 기준 (도착 1개당 gridY 근사 차감)
+            // 잔여 예산은 픽셀 범위 기준, 도착 1개당 gridY로 근사 차감
             var remaining = new float[layers.Count];
             for (int r = 0; r < layers.Count; r++)
             {
@@ -2963,19 +2847,18 @@ namespace YART
                 remaining[r] = columnBudget - extent;
             }
 
-            // 1) 그리디 배정: 노드마다 첫 여유 후보 컬럼 (없으면 홈). 좌표는 2)에서 일괄 결정.
+            // 1) 컬럼 배정. 좌표는 2)에서 일괄 결정
             var arrivals = new Dictionary<int, List<ResearchNode>>();
             foreach (int home in isolatedNodesByRank.Keys.OrderBy(r => r))
             {
                 foreach (var node in isolatedNodesByRank[home])
                 {
-                    // 프록시는 effectiveTechLevel에 없으므로 node.TechLevel 폴백
+                    // 프록시는 effectiveTechLevel에 없음
                     var era = effectiveTechLevel.TryGetValue(node, out var etl) ? etl : node.TechLevel;
                     int target = -1;
                     if (bands.TryGetValue(era, out var band))
                     {
-                        // 잔여 예산이 가장 큰 컬럼에 배치하고 배치할 때마다 remaining을 깎아 라운드로빈 분산.
-                        // 동률이면 home에 가까운 쪽.
+                        // 잔여 예산이 가장 큰 컬럼에 두고 매번 깎아 고르게 분산. 동률이면 home에 가까운 쪽
                         float bestRem = float.NegativeInfinity;
                         for (int r = band.lo; r <= band.hi; r++)
                         {
@@ -2989,7 +2872,7 @@ namespace YART
                             }
                         }
                     }
-                    if (target < 0) target = home; // 밴드 없음/전부 막힘 — 홈 바닥에 스택
+                    if (target < 0) target = home; // 밴드가 없거나 다 막히면 홈 바닥에 쌓음
 
                     remaining[target] -= gridY;
                     if (!arrivals.TryGetValue(target, out var list))
@@ -3001,7 +2884,7 @@ namespace YART
                 }
             }
 
-            // 2) 컬럼별 좌표 결정 + 레이어 편입
+            // 2) 좌표 결정, 레이어 편입
             foreach (int rank in arrivals.Keys.OrderBy(r => r))
             {
                 var nodes = arrivals[rank];
@@ -3010,7 +2893,7 @@ namespace YART
                 float nextY;
                 if (layer.Count > 0)
                 {
-                    // VOrder 마지막이 최하단이 아닐 수 있으므로(더미 스냅 오차) 실제 최하단 Y를 찾는다
+                    // 더미 스냅 오차로 마지막 VOrder가 최하단이 아닐 수 있음
                     float bottom = float.MinValue;
                     foreach (var nn in layer)
                         if (nn.Position.y > bottom) bottom = nn.Position.y;
@@ -3023,7 +2906,7 @@ namespace YART
 
                 foreach (var n in nodes)
                 {
-                    n.Rank = rank; // 홈과 다를 수 있다 — Rank와 레이어 인덱스 일관성 유지
+                    n.Rank = rank; // 홈과 다를 수 있으니 레이어 인덱스에 맞춤
                     n.Position = new Vector2(rankX[rank], nextY);
                     layer.Add(n);
                     nextY += gridY;
@@ -3032,7 +2915,7 @@ namespace YART
             SyncVOrder(layers);
         }
 
-        /// <summary>고립 분산 후보 컬럼 가드: era보다 높은 시대의 점유자(주로 데이터 오류 프록시)가 있으면 false.</summary>
+        /// <summary>era보다 높은 시대 점유자(주로 데이터 오류 프록시)가 있으면 false</summary>
         private bool NoHigherEraOccupant(List<ResearchNode> layer, TechLevel era)
         {
             foreach (var n in layer)

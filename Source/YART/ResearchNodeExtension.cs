@@ -3,14 +3,10 @@ using Verse;
 
 namespace YART
 {
-    /// <summary>
-    /// A research node customization
-    /// <modExtensions>
-    ///   <li Class="YART.ResearchNodeExtension">
-    ///     <iconPath>UI/Icons/MyResearchIcon</iconPath>
-    ///   </li>
-    /// </modExtensions>
-    /// </summary>
+    // Usage (inside <modExtensions>):
+    // <li Class="YART.ResearchNodeExtension">
+    //   <iconPath>UI/Icons/MyResearchIcon</iconPath>
+    // </li>
     public class ResearchNodeExtension : DefModExtension
     {
         [Description("iconPath where textures are located")]
@@ -19,7 +15,7 @@ namespace YART
         [Unsaved] private Texture2D resolvedIcon;
         [Unsaved] private bool resolveAttempted;
 
-        /// <summary>지정 아이콘 (lazy — 메인스레드 OnGUI 최초 접근 시 로드, 결과는 null 포함 캐시).</summary>
+        /// <summary>메인 스레드에서 처음 접근할 때 로드. null 결과도 캐시</summary>
         public Texture2D Icon
         {
             get

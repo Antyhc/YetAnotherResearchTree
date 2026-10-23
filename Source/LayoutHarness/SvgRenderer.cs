@@ -65,7 +65,6 @@ namespace LayoutHarness
             foreach (var n in g.Nodes.Where(n => !n.IsDummy))
             {
                 float x = n.Position.x, y = n.Position.y - halfReal;
-                // 그룹키가 있으면 그룹별 색(정렬 가시화), 없으면 시대색 폴백
                 var c = !string.IsNullOrEmpty(n.GroupKey) ? GroupColor(n.GroupKey) : EraColor(n.TechLevel);
                 string hex = Hex(c);
                 if (n.IsProxy)
@@ -100,7 +99,7 @@ namespace LayoutHarness
             }
         }
 
-        // 그룹키 → 안정적 고채도 색 (해시 기반 hue, 정렬 가시화용)
+        // 해시 기반 hue라 실행마다 같은 색
         private static Color GroupColor(string group)
         {
             int hash = 17;

@@ -19,16 +19,15 @@ namespace YART
 
             Widgets.DrawBoxSolid(rect, Constraints.PanelBg);
             GUIDrawingUtilities.DrawBorderLines(rect, Constraints.PanelBorder, 1f);
-            // 채널 색 액센트 (상단 바이므로 아래 변에)
+            // 상단 바라 채널 색 액센트는 아래 변에
             Widgets.DrawBoxSolid(new Rect(rect.x, rect.yMax - 2f, rect.width, 2f),
                 GenColor.WithAlpha(SelectedChannel.Color, 0.6f));
 
             queueBarHoveredDef = null;
 
-            // Stored Research 누적 포인트 칩 (우측 끝, 큐가 비어도 표시)
+            // 큐가 비어도 보이도록 먼저 그림
             float storedChipReserved = DrawStoredResearchChip(rect);
 
-            // 빈 큐
             if (queue.Count == 0 && draggedQueueDef == null)
             {
                 using (Temporary.Font(GameFont.Tiny))
@@ -42,7 +41,7 @@ namespace YART
                 return;
             }
 
-            // 우측 고정 요소(DEV 패널·비우기 버튼)를 그리면서 스크롤 영역을 그만큼 좁힌다
+            // 우측 고정 요소(DEV 패널, 비우기 버튼)만큼 스크롤 영역을 좁힘
             Rect scrollRect = rect;
             scrollRect.xMin += leftInset;
             scrollRect.width -= storedChipReserved;
@@ -56,7 +55,6 @@ namespace YART
                     queue[0]);
             }
 
-            // 큐 비우기 버튼 (SSR 활성화시 숨김 처리)
             if (!SemiRandomResearchCompat.Active)
             {
                 const float clearW = 60f;
@@ -70,7 +68,7 @@ namespace YART
             float gap = Constraints.QueueCardGap;
             Rect viewRect = new Rect(0f, 0f, queue.Count * (cardWidth + gap) + gap, rect.height - 18f);
 
-            // 가로 overflow 시 휠 -> 가로 스크롤
+            // 넘치면 휠로 가로 스크롤
             float maxScrollX = Mathf.Max(0f, viewRect.width - scrollRect.width);
             if (maxScrollX > 0f && Event.current.type == EventType.ScrollWheel
                 && scrollRect.Contains(Event.current.mousePosition))
@@ -122,7 +120,7 @@ namespace YART
             TooltipHandler.TipRegion(clearRect, "YART_ClearTooltip".Translate());
         }
 
-        /// <summary>드래그 중인 카드를 마우스에 붙여 그리고, 놓는 순간 드롭 위치로 재정렬한다.</summary>
+        /// <summary>놓는 순간 드롭 위치로 재정렬</summary>
         private void DrawDraggedQueueCard(Rect barRect, ResearchQueueManager queueMgr,
             IReadOnlyList<ResearchProjectDef> queue, float cardWidth, float gap)
         {
@@ -145,10 +143,7 @@ namespace YART
             queueCardMouseDownDef = null;
         }
 
-        /// <summary>
-        /// Stored Research 호환: 누적 연구 포인트 칩 (큐 바 우측 끝).
-        /// 그렸으면 소비한 가로폭(여백 포함)을, 비활성이면 0을 반환한다.
-        /// </summary>
+        /// <summary>쓴 가로폭(여백 포함)을 반환, 비활성이면 0</summary>
         private float DrawStoredResearchChip(Rect barRect)
         {
             if (!StoredResearchCompat.Active) return 0f;
@@ -203,7 +198,6 @@ namespace YART
 
             Rect inner = panel.ContractedBy(6f);
 
-            // DEV 라벨 (세로 중앙)
             Rect labelRect = new Rect(inner.x, inner.y, 34f, inner.height);
             using (Temporary.Font(GameFont.Tiny))
             using (Temporary.Anchor(TextAnchor.MiddleCenter))
@@ -259,9 +253,9 @@ namespace YART
                     return;
                 }
 
-                // 넘침: 그룹으로 클립한 뒤 좌로 스크롤. 끝나면 gap만큼 띄우고 다시 들어오게 두 벌 그린다.
+                // 넘치면 그룹으로 클립하고 좌로 흘림. 끊김 없이 이어지게 두 벌 그림
                 GUI.BeginGroup(rect);
-                const float gap = 36f;   // 한 바퀴 사이 여백
+                const float gap = 36f;
                 const float speed = 35f; // px/s
                 float period = size.x + gap;
                 float offset = Mathf.Repeat(Time.realtimeSinceStartup * speed, period);
@@ -296,7 +290,6 @@ namespace YART
                 queueBarHoveredDef = def;
             }
 
-            // 좌측 순번/상태 표시
             Rect indexRect = new Rect(rect.x + 4f, rect.y, 18f, rect.height);
             if (isCurrent)
             {
@@ -332,7 +325,6 @@ namespace YART
                     $"{def.ProgressApparentString} / {def.CostApparent:N0}");
             }
 
-            // 진행바 (하단)
             float progress = def.ProgressPercent;
             Rect barTrack = new Rect(rect.x + 2f, rect.yMax - 5f, rect.width - 4f, 3f);
             Widgets.DrawBoxSolid(barTrack, new Color(0f, 0f, 0f, 0.5f));
@@ -343,7 +335,7 @@ namespace YART
 
             if (dragging) return;
 
-            // 제거 버튼 (SSR 활성화 시 숨김 — closeRect가 zero라 아래 클릭 판별에서도 자연히 제외)
+            // SSR이면 closeRect가 zero라 아래 클릭 판별에서도 빠짐
             const float cs = 22f;
             Rect closeRect = SemiRandomResearchCompat.Active
                 ? Rect.zero
@@ -358,7 +350,6 @@ namespace YART
             HandleQueueCardMouse(rect, closeRect, def);
         }
 
-        /// <summary>큐 카드 우상단의 붉은 제거 버튼. 눌렸으면 true.</summary>
         private static bool DrawQueueCardCloseButton(Rect closeRect)
         {
             Widgets.DrawBoxSolid(closeRect, Mouse.IsOver(closeRect)
@@ -369,7 +360,7 @@ namespace YART
             return Widgets.ButtonInvisible(closeRect);
         }
 
-        /// <summary>큐 카드 위 마우스: 임계값을 넘긴 이동은 드래그(재정렬), 아니면 클릭(노드 점프).</summary>
+        /// <summary>임계값을 넘겨 움직이면 드래그(재정렬), 아니면 클릭(노드 점프)</summary>
         private void HandleQueueCardMouse(Rect rect, Rect closeRect, ResearchProjectDef def)
         {
             var e = Event.current;
@@ -401,7 +392,7 @@ namespace YART
             }
         }
 
-        /// <summary>큐 카드 하단의 해금물 아이콘 줄. 폭이 모자라면 마지막 칸을 "+n"으로 대체한다.</summary>
+        /// <summary>폭이 모자라면 마지막 칸을 "+n"으로 대체</summary>
         private static void DrawQueueCardUnlockIcons(Rect rect, List<Def> unlocked, bool dragging)
         {
             if (unlocked.Count == 0) return;
