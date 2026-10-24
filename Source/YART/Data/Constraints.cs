@@ -144,18 +144,18 @@ namespace YART.Data
         public const float LayoutDummyVisualPad = 4f;
 
         // 높이 제한 레이어링의 탭별 기본값. 통합 탭은 SugiyamaLayout.ComputeColumnBudget가 산정
-        public static float LayoutMaxColumnRows = 9.5f;
+        public static float LayoutMaxColumnRows = 12f;
         public static float LayoutMaxColumnHeight => LayoutMaxColumnRows * (NodeSize.y + NodeSpacing.y);
         // 통합 그래프 예산 = rank별 실노드 수의 이 백분위수(행). 높을수록 덜 평탄화되고 rank 높이가 커짐
-        public static float LayoutUnifiedBudgetPercentile = 0.61f;
+        public static float LayoutUnifiedBudgetPercentile = 0.88f;
         // transpose/DP가 빠져나오지 못하는 local optimum 탈출용
         public const int LayoutSiftingMaxPasses = 4;
         // PickCandidate 가드
-        public static int LayoutMaxEdgeSpan = 4;
+        public static int LayoutMaxEdgeSpan = 2;
         // 밴드 확장으로 늘릴 수 있는 랭크 수 합계
-        public static int LayoutHeightLimitMaxExtraRanks = 1;
+        public static int LayoutHeightLimitMaxExtraRanks = 8;
         // 통로 포화 컬럼에서도 남겨 두는 실노드 최소 행 수
-        public static int LayoutHeightLimitMinRows = 4;
+        public static int LayoutHeightLimitMinRows = 6;
 
         // Crossing Minimization Configuration
         public const int LayoutOrderingMaxIterations = 24;
@@ -165,7 +165,7 @@ namespace YART.Data
         public const int LayoutGroupSearchMaxPasses = 8;
         public const int LayoutExactLayerMaxNodes = 10; // 부분집합 DP를 적용할 레이어 크기 상한
         // 멀티 스타트 선택 점수 = 교차 수 + 이 값 x 높이행수(estHeight/gridY)
-        public static float LayoutOrderingHeightWeight = 0.55f;
+        public static float LayoutOrderingHeightWeight = 4f;
 
         // Layout Metrics
         public const float MetricsRefViewportW = 1920f - 300f;
@@ -173,8 +173,8 @@ namespace YART.Data
         public const float MetricsBendEpsilon = 0.5f;
 
         // Rank Cost 가중치
-        public static float RankCostSpanWeight  = 0.07f; // lambda, 엣지 스팬 항
-        public static float RankCostWidthWeight = 0.66f; // mu, 사용 랭크 수 항
+        public static float RankCostSpanWeight  = 0.01f; // lambda, 엣지 스팬 항
+        public static float RankCostWidthWeight = 0.1f;  // mu, 사용 랭크 수 항
 
         // Chain Shaping Convergence (ShapeChains)
         public const int LayoutChainShapeMaxPasses = 32;
@@ -185,10 +185,10 @@ namespace YART.Data
         public const int LayoutSpringPasses = 16;
 
         // 이웃 평균 대신 현재 Y에 머무르려는 정도
-        public static float LayoutSpringSelfAnchor = 0.4f;
+        public static float LayoutSpringSelfAnchor = 0.05f;
 
         // Tikhonov 중심 정규화 lambda_base, 0=비활성. barycenter 분모에만 더해 노드를 중심선(0)으로 당김
         // 높이 슬랙(현재높이/H_floor)에 비례하므로 높이가 이미 바닥인 그래프(통합)에선 효과 없음
-        public static float LayoutSpringCenterAnchor = 0.02f;
+        public static float LayoutSpringCenterAnchor = 0.8f;
     }
 }

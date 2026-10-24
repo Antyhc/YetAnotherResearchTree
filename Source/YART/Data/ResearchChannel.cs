@@ -93,9 +93,12 @@ namespace YART.Data
 
                 var list = new List<ResearchChannel>();
                 int paletteIndex = 0;
-                foreach (var category in DefDatabase<KnowledgeCategoryDef>.AllDefsListForReading)
+                if (ModsConfig.AnomalyActive)
                 {
-                    list.Add(new KnowledgeChannel(category, paletteIndex++));
+                    foreach (var category in DefDatabase<KnowledgeCategoryDef>.AllDefsListForReading)
+                    {
+                        list.Add(new KnowledgeChannel(category, paletteIndex++));
+                    }
                 }
                 if (GravshipCompat.IsVanillaGravshipExpandedLoaded.Value)
                 {
